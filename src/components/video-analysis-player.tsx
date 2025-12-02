@@ -6,6 +6,69 @@ import { Button } from "@/components/ui/button"
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision"
 import type { MovementSequence } from "@/lib/pose-analyzer"
 
+/**
+ * One Euro Filter for smooth landmark tracking in real-time playback
+ */
+class OneEuroFilter {
+  private x_prev: number = 0
+  private dx_prev: number = 0
+  private t_prev: number = 0
+  
+  constructor(
+    private min_cutoff: number = 1.0,
+    private beta: number = 0.007,
+    private d_cutoff: number = 1.0
+  ) {}
+  
+  private smoothingFactor(t_e: number, cutoff: number): number {
+    const r = 2 * Math.PI * cutoff * t_e
+    return r / (r + 1)
+  }
+  
+  private exponentialSmoothing(a: number, x: number, x_prev: number): number {
+    return a * x + (1 - a) * x_prev
+  }
+  
+  filter(x: number, t: number): number {
+    const t_e = this.t_prev === 0 ? 0.016 : t - this.t_prev // Default to ~60fps
+    
+    if (t_e === 0) {
+      return x
+    }
+    
+    // Estimate velocity
+    const dx = (x - this.x_prev) / t_e
+    const edx = this.exponentialSmoothing(
+      this.smoothingFactor(t_e, this.d_cutoff),
+      dx,
+      this.dx_prev
+    )
+    
+    // Adaptive cutoff based on velocity
+    const cutoff = this.min_cutoff + this.beta * Math.abs(edx)
+    
+    // Smooth the signal
+    const x_filtered = this.exponentialSmoothing(
+      this.smoothingFactor(t_e, cutoff),
+      x,
+      this.x_prev
+    )
+    
+    // Store for next iteration
+    this.x_prev = x_filtered
+    this.dx_prev = edx
+    this.t_prev = t
+    
+    return x_filtered
+  }
+  
+  reset() {
+    this.x_prev = 0
+    this.dx_prev = 0
+    this.t_prev = 0
+  }
+}
+
 interface VideoAnalysisPlayerProps {
   videoBlob: Blob
   movements: MovementSequence[]
@@ -19,6 +82,9 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
   const [isLoading, setIsLoading] = useState(true)
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  
+  // One Euro Filters for each landmark coordinate
+  const landmarkFiltersRef = useRef<Map<string, { x: OneEuroFilter; y: OneEuroFilter; z: OneEuroFilter }>>(new Map())
 
   useEffect(() => {
     initializePlayer()
@@ -43,12 +109,16 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
 
       const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: {
+          // Use full model for better stability (not lite)
           modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
           delegate: "GPU",
         },
         runningMode: "VIDEO",
         numPoses: 1,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
       })
 
       poseLandmarkerRef.current = poseLandmarker
@@ -92,7 +162,32 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
       const results = poseLandmarker.detectForVideo(video, timestamp)
 
       if (results.landmarks && results.landmarks.length > 0) {
-        const landmarks = results.landmarks[0]
+        const rawLandmarks = results.landmarks[0]
+        
+        // Apply One Euro Filter smoothing to landmarks
+        const smoothedLandmarks = rawLandmarks.map((landmark: any, index: number) => {
+          const key = `landmark_${index}`
+          
+          if (!landmarkFiltersRef.current.has(key)) {
+            landmarkFiltersRef.current.set(key, {
+              x: new OneEuroFilter(1.0, 0.007),
+              y: new OneEuroFilter(1.0, 0.007),
+              z: new OneEuroFilter(1.0, 0.007),
+            })
+          }
+          
+          const filter = landmarkFiltersRef.current.get(key)!
+          const t = video.currentTime
+          
+          return {
+            x: filter.x.filter(landmark.x, t),
+            y: filter.y.filter(landmark.y, t),
+            z: landmark.z ? filter.z.filter(landmark.z, t) : landmark.z,
+            visibility: landmark.visibility,
+          }
+        })
+        
+        const landmarks = smoothedLandmarks
         const drawingUtils = new DrawingUtils(ctx)
 
         // Draw skeleton connections
@@ -169,7 +264,7 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
         const ankleX = ankle.x * width
         const ankleY = ankle.y * height
 
-        // Calculate angle from vertical
+        // Calculate angle from vertical (already smoothed via landmark filters)
         const dx = ankleX - kneeX
         const dy = ankleY - kneeY
         const angle = Math.abs((Math.atan2(dx, dy) * 180) / Math.PI)
@@ -196,7 +291,7 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
         const ankleX = ankle.x * width
         const ankleY = ankle.y * height
 
-        // Calculate angle from vertical
+        // Calculate angle from vertical (already smoothed via landmark filters)
         const dx = ankleX - kneeX
         const dy = ankleY - kneeY
         const angle = Math.abs((Math.atan2(dx, dy) * 180) / Math.PI)
@@ -290,6 +385,20 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
     setIsPlaying(!isPlaying)
   }
 
+  const handleReset = () => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0
+      setIsPlaying(false)
+      // Reset all filters for fresh smoothing
+      landmarkFiltersRef.current.forEach((filter) => {
+        filter.x.reset()
+        filter.y.reset()
+        filter.z.reset()
+      })
+      landmarkFiltersRef.current.clear()
+    }
+  }
+
   return (
     <Card className="p-6">
       <h3 className="font-semibold mb-4">Video Analysis Playback</h3>
@@ -322,12 +431,7 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
             </Button>
             <Button
               variant="outline"
-              onClick={() => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = 0
-                  setIsPlaying(false)
-                }
-              }}
+              onClick={handleReset}
             >
               Reset
             </Button>

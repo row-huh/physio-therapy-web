@@ -22,6 +22,103 @@ export interface PoseAnalysisResult {
   summary: string
 }
 
+/**
+ * One Euro Filter for temporal smoothing of landmarks
+ * Reduces jitter while maintaining responsiveness to real movement
+ */
+class OneEuroFilter {
+  private x_prev: number = 0
+  private dx_prev: number = 0
+  private t_prev: number = 0
+  
+  constructor(
+    private min_cutoff: number = 1.0,
+    private beta: number = 0.007,
+    private d_cutoff: number = 1.0
+  ) {}
+  
+  private smoothingFactor(t_e: number, cutoff: number): number {
+    const r = 2 * Math.PI * cutoff * t_e
+    return r / (r + 1)
+  }
+  
+  private exponentialSmoothing(a: number, x: number, x_prev: number): number {
+    return a * x + (1 - a) * x_prev
+  }
+  
+  filter(x: number, t: number): number {
+    const t_e = this.t_prev === 0 ? 0 : t - this.t_prev
+    
+    if (t_e === 0) {
+      return x
+    }
+    
+    // Estimate velocity
+    const dx = (x - this.x_prev) / t_e
+    const edx = this.exponentialSmoothing(
+      this.smoothingFactor(t_e, this.d_cutoff),
+      dx,
+      this.dx_prev
+    )
+    
+    // Adaptive cutoff based on velocity
+    const cutoff = this.min_cutoff + this.beta * Math.abs(edx)
+    
+    // Smooth the signal
+    const x_filtered = this.exponentialSmoothing(
+      this.smoothingFactor(t_e, cutoff),
+      x,
+      this.x_prev
+    )
+    
+    // Store for next iteration
+    this.x_prev = x_filtered
+    this.dx_prev = edx
+    this.t_prev = t
+    
+    return x_filtered
+  }
+}
+
+/**
+ * Landmark smoother using One Euro Filters
+ */
+class LandmarkSmoother {
+  private filters: Map<string, { x: OneEuroFilter; y: OneEuroFilter; z: OneEuroFilter }> = new Map()
+  
+  constructor(
+    private min_cutoff: number = 1.0,
+    private beta: number = 0.007
+  ) {}
+  
+  smoothLandmarks(landmarks: any[], timestamp: number): any[] {
+    return landmarks.map((landmark, index) => {
+      const key = `landmark_${index}`
+      
+      if (!this.filters.has(key)) {
+        this.filters.set(key, {
+          x: new OneEuroFilter(this.min_cutoff, this.beta),
+          y: new OneEuroFilter(this.min_cutoff, this.beta),
+          z: new OneEuroFilter(this.min_cutoff, this.beta),
+        })
+      }
+      
+      const filter = this.filters.get(key)!
+      
+      return {
+        x: filter.x.filter(landmark.x, timestamp),
+        y: filter.y.filter(landmark.y, timestamp),
+        z: filter.z ? filter.z.filter(landmark.z || 0, timestamp) : landmark.z,
+        visibility: landmark.visibility,
+      }
+    })
+  }
+  
+  reset() {
+    this.filters.clear()
+  }
+}
+
 // MediaPipe Pose landmark indices
 const POSE_LANDMARKS = {
   LEFT_SHOULDER: 11,
@@ -125,11 +222,17 @@ export async function analyzeVideoForPose(
     console.log("Creating PoseLandmarker...")
     const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+        // Use full model for better stability (not lite)
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
         delegate: "GPU",
       },
       runningMode: "VIDEO",
       numPoses: 1,
+      minPoseDetectionConfidence: 0.5,
+      minPosePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      // Output segmentation mask helps with tracking stability
+      outputSegmentationMasks: false,
     })
     console.log("PoseLandmarker created successfully")
 
@@ -156,10 +259,15 @@ export async function analyzeVideoForPose(
     })
 
     const jointAngles: JointAngle[] = []
-    const fps = 5 // Process 5 frames per second to reduce computation
+    const fps = 30 // Process at 30 FPS for better temporal consistency
     const frameInterval = 1000 / fps
     
-    console.log(`Processing video at ${fps} FPS`)
+    // Initialize landmark smoother with tuned parameters
+    // min_cutoff: lower = more smoothing, higher = more responsive
+    // beta: higher = more responsive to velocity changes
+    const landmarkSmoother = new LandmarkSmoother(1.0, 0.007)
+    
+    console.log(`Processing video at ${fps} FPS with One Euro Filter smoothing`)
     
     // Process video frames
     let frameCount = 0
@@ -175,10 +283,12 @@ export async function analyzeVideoForPose(
       const results = poseLandmarker.detectForVideo(video, timestamp)
       
       if (results.landmarks && results.landmarks.length > 0) {
-        const landmarks = results.landmarks[0]
+        // Apply temporal smoothing to raw landmarks
+        const rawLandmarks = results.landmarks[0]
+        const smoothedLandmarks = landmarkSmoother.smoothLandmarks(rawLandmarks, timestamp)
         
-        // Calculate angles for key joints
-        const angles = calculateJointAngles(landmarks, jointsOfInterest)
+        // Calculate angles from smoothed landmarks
+        const angles = calculateJointAngles(smoothedLandmarks, jointsOfInterest)
         
         angles.forEach((angleData) => {
           jointAngles.push({
@@ -190,7 +300,7 @@ export async function analyzeVideoForPose(
         frameCount++
       }
       
-      if (frameCount % 10 === 0) {
+      if (frameCount % 30 === 0) {
         console.log(`Processed ${frameCount} frames at ${video.currentTime.toFixed(2)}s`)
       }
     }
@@ -351,16 +461,68 @@ function calculateJointAngles(
 }
 
 /**
- * Detect significant movements from joint angle data
+ * Apply additional angle-level smoothing using exponential moving average
+ * This is a secondary smoothing layer after landmark smoothing
+ * @param jointAngles Angle data (already from smoothed landmarks)
+ * @param alpha Smoothing factor (0.0 = max smoothing, 1.0 = no smoothing)
  */
-function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
-  const movements: MovementSequence[] = []
-  const ANGLE_THRESHOLD = 20 // Increased: Minimum angle change to consider as movement (more strict)
-  const TIME_THRESHOLD = 0.3 // Minimum time (seconds) to hold position
+function smoothJointAnglesEMA(jointAngles: JointAngle[], alpha: number = 0.3): JointAngle[] {
+  const smoothed: JointAngle[] = []
   
   // Group by joint
   const jointGroups = new Map<string, JointAngle[]>()
   jointAngles.forEach((ja) => {
+    if (!jointGroups.has(ja.joint)) {
+      jointGroups.set(ja.joint, [])
+    }
+    jointGroups.get(ja.joint)!.push(ja)
+  })
+  
+  // Smooth each joint's angles using EMA
+  jointGroups.forEach((angles, joint) => {
+    // Sort by timestamp
+    angles.sort((a, b) => a.timestamp - b.timestamp)
+    
+    if (angles.length === 0) return
+    
+    // First value is unchanged
+    let prevSmoothed = angles[0].angle
+    smoothed.push(angles[0])
+    
+    // Apply exponential smoothing
+    for (let i = 1; i < angles.length; i++) {
+      const currentAngle = angles[i].angle
+      const smoothedAngle = alpha * currentAngle + (1 - alpha) * prevSmoothed
+      
+      smoothed.push({
+        joint: angles[i].joint,
+        angle: smoothedAngle,
+        timestamp: angles[i].timestamp,
+      })
+      
+      prevSmoothed = smoothedAngle
+    }
+  })
+  
+  return smoothed
+}
+
+/**
+ * Detect significant movements from joint angle data
+ */
+function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
+  const movements: MovementSequence[] = []
+  const ANGLE_THRESHOLD = 20 // Minimum angle change to consider as movement
+  const NOISE_THRESHOLD = 5 // Ignore changes smaller than this (reduced due to better smoothing)
+  const TIME_THRESHOLD = 0.4 // Minimum time (seconds) to hold position
+  
+  // Apply additional angle-level smoothing (secondary layer)
+  // Since landmarks are already smoothed, use lighter smoothing here
+  const smoothedAngles = smoothJointAnglesEMA(jointAngles, 0.35)
+  
+  // Group by joint
+  const jointGroups = new Map<string, JointAngle[]>()
+  smoothedAngles.forEach((ja) => {
     if (!jointGroups.has(ja.joint)) {
       jointGroups.set(ja.joint, [])
     }
@@ -375,14 +537,21 @@ function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
     angles.sort((a, b) => a.timestamp - b.timestamp)
     
     let currentSegment: JointAngle | null = angles[0]
+    let accumulatedDelta = 0
     
     for (let i = 1; i < angles.length; i++) {
       const angle = angles[i]
-      const angleDelta = Math.abs(angle.angle - currentSegment!.angle)
+      const instantDelta = angle.angle - angles[i - 1].angle
+      const totalDelta = angle.angle - currentSegment!.angle
       const timeDelta = angle.timestamp - currentSegment!.timestamp
       
+      // Ignore small jitters
+      if (Math.abs(instantDelta) > NOISE_THRESHOLD) {
+        accumulatedDelta += instantDelta
+      }
+      
       // Detect significant movement
-      if (angleDelta > ANGLE_THRESHOLD && timeDelta >= TIME_THRESHOLD) {
+      if (Math.abs(totalDelta) > ANGLE_THRESHOLD && timeDelta >= TIME_THRESHOLD) {
         movements.push({
           joint,
           startAngle: currentSegment!.angle,
@@ -393,9 +562,10 @@ function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
           angleDelta: angle.angle - currentSegment!.angle,
         })
         currentSegment = angle
+        accumulatedDelta = 0
       } else if (i === angles.length - 1 && timeDelta >= TIME_THRESHOLD) {
         // Last segment - check if there was any significant change
-        if (angleDelta > ANGLE_THRESHOLD) {
+        if (Math.abs(totalDelta) > ANGLE_THRESHOLD) {
           movements.push({
             joint,
             startAngle: currentSegment!.angle,
