@@ -10,6 +10,7 @@ import { createExercise, addKeyPose, type Exercise } from "@/lib/pose-store"
 import { saveExerciseVideo } from "@/lib/storage"
 import type { Pose } from "@/lib/pose-utils"
 import { analyzeVideoForPose, type PoseAnalysisResult } from "@/lib/pose-analyzer"
+import { EXERCISE_CONFIGS, getExerciseConfig } from "@/lib/exercise-config"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 
@@ -20,6 +21,7 @@ export default function RecordPage() {
     searchParams.get("name") ? "recording" : "input",
   )
   const [exerciseName, setExerciseName] = useState(searchParams.get("name") || "")
+  const [exerciseType, setExerciseType] = useState(searchParams.get("type") || "knee-extension")
   const [exerciseDesc, setExerciseDesc] = useState("")
   const [exercise, setExercise] = useState<Exercise | null>(null)
   const [capturedPoses, setCapturedPoses] = useState<{ name: string; pose: Pose }[]>([])
@@ -65,12 +67,20 @@ export default function RecordPage() {
   }
 
   const handleSave = async () => {
-    if (exerciseName.trim() && recordedBlob) {
+    if (recordedBlob) {
       setIsAnalyzing(true)
       
       try {
         console.log("Starting video analysis...")
-        const result = await analyzeVideoForPose(recordedBlob)
+        
+        // Get joints of interest for the selected exercise type
+        const exerciseConfig = getExerciseConfig(exerciseType)
+        const jointsOfInterest = exerciseConfig?.jointsOfInterest
+        
+        console.log(`Analyzing for exercise: ${exerciseConfig?.name}`)
+        console.log(`Joints of interest:`, jointsOfInterest)
+        
+        const result = await analyzeVideoForPose(recordedBlob, jointsOfInterest)
         setAnalysisResult(result)
         
         console.log("Analysis complete!")
@@ -78,14 +88,14 @@ export default function RecordPage() {
         console.log("Movements:", result.movements)
         console.log("Summary:\n", result.summary)
         
-        // Save the video
-        saveExerciseVideo(exerciseName, recordedBlob)
+        // Save the video with exercise type as name if no custom name provided
+        const videoName = exerciseName.trim() || exerciseConfig?.name || "exercise"
+        saveExerciseVideo(videoName, recordedBlob)
         
-        // Show complete step with analysis
-        setStep("complete")
+        // Analysis is complete, stay on this page to show results
       } catch (error) {
         console.error("Error analyzing video:", error)
-        alert("Error analyzing video. Please try again.")
+        alert(`Error analyzing video: ${error instanceof Error ? error.message : "Unknown error"}`)
       } finally {
         setIsAnalyzing(false)
       }
@@ -103,19 +113,45 @@ export default function RecordPage() {
           <div className="space-y-6">
             <div>
               <h1 className="text-3xl font-bold mb-2">Record Exercise</h1>
-              <p className="text-muted-foreground">Enter exercise name and record video</p>
+              <p className="text-muted-foreground">Select exercise type and record video</p>
             </div>
 
-            <div className="space-y-2">
-              <label className="block text-sm font-medium">Exercise Name</label>
-              <Input
-                placeholder="e.g., Squat, Push-up"
-                value={exerciseName}
-                onChange={(e) => setExerciseName(e.target.value)}
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium">Exercise Type</label>
+                <select
+                  value={exerciseType}
+                  onChange={(e) => setExerciseType(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {EXERCISE_CONFIGS.map((config) => (
+                    <option key={config.id} value={config.id}>
+                      {config.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {getExerciseConfig(exerciseType)?.description}
+                </p>
+                <div className="text-xs text-muted-foreground mt-2">
+                  <strong>Tracked joints:</strong>{" "}
+                  {getExerciseConfig(exerciseType)
+                    ?.jointsOfInterest.map((j) => j.replace("_", " "))
+                    .join(", ")}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium">Exercise Name (Optional)</label>
+                <Input
+                  placeholder="e.g., Morning knee extension"
+                  value={exerciseName}
+                  onChange={(e) => setExerciseName(e.target.value)}
+                />
+              </div>
             </div>
 
-            <Button onClick={() => setStep("recording")} disabled={!exerciseName.trim()} className="w-full">
+            <Button onClick={() => setStep("recording")} className="w-full">
               Start Recording
             </Button>
           </div>
@@ -217,8 +253,16 @@ export default function RecordPage() {
         {step === "recording" && !exercise && (
           <div className="space-y-6">
             <div>
-              <h1 className="text-3xl font-bold mb-2">{exerciseName}</h1>
+              <h1 className="text-3xl font-bold mb-2">
+                {exerciseName || getExerciseConfig(exerciseType)?.name}
+              </h1>
               <p className="text-muted-foreground">Record or upload your exercise video</p>
+              <div className="mt-2 text-sm bg-muted p-3 rounded-lg">
+                <strong>Tracking:</strong>{" "}
+                {getExerciseConfig(exerciseType)
+                  ?.jointsOfInterest.map((j) => j.replace("_", " ").toUpperCase())
+                  .join(", ")}
+              </div>
             </div>
 
             <SimpleRecorder onRecordComplete={handleRecordComplete} />
@@ -294,6 +338,17 @@ export default function RecordPage() {
 
             {analysisResult && (
               <div className="space-y-4">
+                <Card className="p-6 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+                  <h3 className="font-semibold mb-2">
+                    {getExerciseConfig(exerciseType)?.name} Analysis
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Analyzed joints: {getExerciseConfig(exerciseType)
+                      ?.jointsOfInterest.map((j) => j.replace("_", " "))
+                      .join(", ")}
+                  </p>
+                </Card>
+
                 <Card className="p-6">
                   <h3 className="font-semibold mb-4">Movement Summary</h3>
                   <pre className="text-xs whitespace-pre-wrap bg-muted p-4 rounded overflow-x-auto">
@@ -325,7 +380,7 @@ export default function RecordPage() {
                     Joint Angle Data Points ({analysisResult.jointAngles.length})
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Total angle measurements captured across all joints throughout the video
+                    Total angle measurements captured across tracked joints throughout the video
                   </p>
                 </Card>
 

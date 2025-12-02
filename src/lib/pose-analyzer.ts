@@ -61,192 +61,323 @@ function calculateAngle(a: number[], b: number[], c: number[]): number {
 }
 
 /**
- * Analyze a video and extract joint movement information
+ * Calculate the angle of a line segment relative to the vertical (0° = straight down)
+ * @param start Starting point [x, y]
+ * @param end Ending point [x, y]
+ * @returns Angle in degrees (0-180)
  */
-export async function analyzeVideoForPose(videoBlob: Blob): Promise<PoseAnalysisResult> {
+function calculateSegmentAngleFromVertical(start: number[], end: number[]): number {
+  // Vector from start to end
+  const dx = end[0] - start[0]
+  const dy = end[1] - start[1]
+  
+  // Angle from vertical (negative Y axis, since Y increases downward in screen coords)
+  // atan2(dx, -dy) gives angle from vertical
+  const radians = Math.atan2(dx, dy)
+  const degrees = Math.abs((radians * 180.0) / Math.PI)
+  
+  return degrees
+}
+
+/**
+ * Calculate the angle of a line segment relative to the horizontal (0° = horizontal)
+ * @param start Starting point [x, y]
+ * @param end Ending point [x, y]
+ * @returns Angle in degrees (0-90)
+ */
+function calculateSegmentAngleFromHorizontal(start: number[], end: number[]): number {
+  const dx = end[0] - start[0]
+  const dy = end[1] - start[1]
+  
+  // Angle from horizontal
+  const radians = Math.atan2(Math.abs(dy), Math.abs(dx))
+  const degrees = (radians * 180.0) / Math.PI
+  
+  return degrees
+}
+
+/**
+ * Analyze a video and extract joint movement information
+ * @param videoBlob The video blob to analyze
+ * @param jointsOfInterest Optional array of joint names to filter (e.g., ["left_knee", "right_knee"])
+ */
+export async function analyzeVideoForPose(
+  videoBlob: Blob,
+  jointsOfInterest?: string[]
+): Promise<PoseAnalysisResult> {
   console.log("Starting pose analysis...")
+  console.log("Video blob size:", videoBlob.size, "bytes")
+  console.log("Video blob type:", videoBlob.type)
   
-  // Initialize MediaPipe
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
-  )
-  
-  const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-      delegate: "GPU",
-    },
-    runningMode: "VIDEO",
-    numPoses: 1,
-  })
-
-  // Create video element from blob
-  const videoUrl = URL.createObjectURL(videoBlob)
-  const video = document.createElement("video")
-  video.src = videoUrl
-  video.muted = true
-  
-  await new Promise((resolve) => {
-    video.onloadedmetadata = resolve
-  })
-
-  const jointAngles: JointAngle[] = []
-  const fps = 5 // Process 5 frames per second to reduce computation
-  const frameInterval = 1000 / fps
-  
-  console.log(`Video duration: ${video.duration}s`)
-  
-  // Process video frames
-  for (let time = 0; time < video.duration * 1000; time += frameInterval) {
-    video.currentTime = time / 1000
-    
-    await new Promise((resolve) => {
-      video.onseeked = resolve
-    })
-    
-    // Detect pose
-    const timestamp = video.currentTime * 1000
-    const results = poseLandmarker.detectForVideo(video, timestamp)
-    
-    if (results.landmarks && results.landmarks.length > 0) {
-      const landmarks = results.landmarks[0]
-      
-      // Calculate angles for key joints
-      const angles = calculateJointAngles(landmarks)
-      
-      angles.forEach((angleData) => {
-        jointAngles.push({
-          ...angleData,
-          timestamp: video.currentTime,
-        })
-      })
-    }
-    
-    console.log(`Processed frame at ${video.currentTime.toFixed(2)}s`)
+  if (jointsOfInterest) {
+    console.log("Tracking joints:", jointsOfInterest.join(", "))
+  } else {
+    console.log("Tracking all joints")
   }
   
-  console.log(`Total joint angles detected: ${jointAngles.length}`)
-  
-  // Analyze movements
-  const movements = detectMovements(jointAngles)
-  
-  // Generate summary
-  const summary = generateSummary(movements)
-  
-  // Cleanup
-  URL.revokeObjectURL(videoUrl)
-  poseLandmarker.close()
-  
-  return {
-    jointAngles,
-    movements,
-    summary,
+  try {
+    // Initialize MediaPipe
+    console.log("Initializing MediaPipe...")
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
+    )
+    
+    console.log("Creating PoseLandmarker...")
+    const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO",
+      numPoses: 1,
+    })
+    console.log("PoseLandmarker created successfully")
+
+    // Create video element from blob
+    const videoUrl = URL.createObjectURL(videoBlob)
+    const video = document.createElement("video")
+    video.src = videoUrl
+    video.muted = true
+    video.crossOrigin = "anonymous"
+    
+    console.log("Waiting for video to load...")
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => {
+        console.log("Video metadata loaded")
+        console.log("Video dimensions:", video.videoWidth, "x", video.videoHeight)
+        console.log("Video duration:", video.duration, "seconds")
+        resolve(null)
+      }
+      video.onerror = (e) => {
+        console.error("Video load error:", e)
+        reject(new Error("Failed to load video"))
+      }
+      setTimeout(() => reject(new Error("Video load timeout")), 10000)
+    })
+
+    const jointAngles: JointAngle[] = []
+    const fps = 5 // Process 5 frames per second to reduce computation
+    const frameInterval = 1000 / fps
+    
+    console.log(`Processing video at ${fps} FPS`)
+    
+    // Process video frames
+    let frameCount = 0
+    for (let time = 0; time < video.duration * 1000; time += frameInterval) {
+      video.currentTime = time / 1000
+      
+      await new Promise((resolve) => {
+        video.onseeked = resolve
+      })
+      
+      // Detect pose
+      const timestamp = video.currentTime * 1000
+      const results = poseLandmarker.detectForVideo(video, timestamp)
+      
+      if (results.landmarks && results.landmarks.length > 0) {
+        const landmarks = results.landmarks[0]
+        
+        // Calculate angles for key joints
+        const angles = calculateJointAngles(landmarks, jointsOfInterest)
+        
+        angles.forEach((angleData) => {
+          jointAngles.push({
+            ...angleData,
+            timestamp: video.currentTime,
+          })
+        })
+        
+        frameCount++
+      }
+      
+      if (frameCount % 10 === 0) {
+        console.log(`Processed ${frameCount} frames at ${video.currentTime.toFixed(2)}s`)
+      }
+    }
+    
+    console.log(`Total frames processed: ${frameCount}`)
+    console.log(`Total joint angles detected: ${jointAngles.length}`)
+    
+    // Analyze movements
+    const movements = detectMovements(jointAngles)
+    console.log(`Detected ${movements.length} movement sequences`)
+    
+    // Generate summary
+    const summary = generateSummary(movements)
+    
+    // Cleanup
+    URL.revokeObjectURL(videoUrl)
+    poseLandmarker.close()
+    
+    return {
+      jointAngles,
+      movements,
+      summary,
+    }
+  } catch (error) {
+    console.error("Error in analyzeVideoForPose:", error)
+    throw error
   }
 }
 
 /**
  * Calculate angles for key joints from landmarks
+ * @param landmarks The pose landmarks
+ * @param jointsOfInterest Optional filter for specific joints
  */
-function calculateJointAngles(landmarks: any[]): Omit<JointAngle, "timestamp">[] {
+function calculateJointAngles(
+  landmarks: any[],
+  jointsOfInterest?: string[]
+): Omit<JointAngle, "timestamp">[] {
   const angles: Omit<JointAngle, "timestamp">[] = []
   
   // Helper to get landmark coordinates
   const getLandmark = (index: number) => [landmarks[index].x, landmarks[index].y]
   
+  // Helper to check if we should track this joint
+  const shouldTrack = (jointName: string) => {
+    if (!jointsOfInterest) return true
+    return jointsOfInterest.includes(jointName)
+  }
+  
   // Left elbow angle (shoulder-elbow-wrist)
-  try {
-    const leftElbowAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
-      getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
-      getLandmark(POSE_LANDMARKS.LEFT_WRIST)
-    )
-    angles.push({ joint: "left_elbow", angle: leftElbowAngle })
-  } catch (e) {
-    console.warn("Could not calculate left elbow angle")
+  if (shouldTrack("left_elbow")) {
+    try {
+      const leftElbowAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_WRIST)
+      )
+      angles.push({ joint: "left_elbow", angle: leftElbowAngle })
+    } catch (e) {
+      console.warn("Could not calculate left elbow angle")
+    }
   }
   
   // Right elbow angle
-  try {
-    const rightElbowAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
-      getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
-      getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
-    )
-    angles.push({ joint: "right_elbow", angle: rightElbowAngle })
-  } catch (e) {
-    console.warn("Could not calculate right elbow angle")
+  if (shouldTrack("right_elbow")) {
+    try {
+      const rightElbowAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
+      )
+      angles.push({ joint: "right_elbow", angle: rightElbowAngle })
+    } catch (e) {
+      console.warn("Could not calculate right elbow angle")
+    }
   }
   
   // Left knee angle (hip-knee-ankle)
-  try {
-    const leftKneeAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.LEFT_HIP),
-      getLandmark(POSE_LANDMARKS.LEFT_KNEE),
-      getLandmark(POSE_LANDMARKS.LEFT_ANKLE)
-    )
-    angles.push({ joint: "left_knee", angle: leftKneeAngle })
-  } catch (e) {
-    console.warn("Could not calculate left knee angle")
+  if (shouldTrack("left_knee")) {
+    try {
+      const leftKneeAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_HIP),
+        getLandmark(POSE_LANDMARKS.LEFT_KNEE),
+        getLandmark(POSE_LANDMARKS.LEFT_ANKLE)
+      )
+      angles.push({ joint: "left_knee", angle: leftKneeAngle })
+    } catch (e) {
+      console.warn("Could not calculate left knee angle")
+    }
   }
   
   // Right knee angle
-  try {
-    const rightKneeAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.RIGHT_HIP),
-      getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
-      getLandmark(POSE_LANDMARKS.RIGHT_ANKLE)
-    )
-    angles.push({ joint: "right_knee", angle: rightKneeAngle })
-  } catch (e) {
-    console.warn("Could not calculate right knee angle")
+  if (shouldTrack("right_knee")) {
+    try {
+      const rightKneeAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP),
+        getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
+        getLandmark(POSE_LANDMARKS.RIGHT_ANKLE)
+      )
+      angles.push({ joint: "right_knee", angle: rightKneeAngle })
+    } catch (e) {
+      console.warn("Could not calculate right knee angle")
+    }
   }
   
   // Left hip angle (shoulder-hip-knee)
-  try {
-    const leftHipAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
-      getLandmark(POSE_LANDMARKS.LEFT_HIP),
-      getLandmark(POSE_LANDMARKS.LEFT_KNEE)
-    )
-    angles.push({ joint: "left_hip", angle: leftHipAngle })
-  } catch (e) {
-    console.warn("Could not calculate left hip angle")
+  if (shouldTrack("left_hip")) {
+    try {
+      const leftHipAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_HIP),
+        getLandmark(POSE_LANDMARKS.LEFT_KNEE)
+      )
+      angles.push({ joint: "left_hip", angle: leftHipAngle })
+    } catch (e) {
+      console.warn("Could not calculate left hip angle")
+    }
   }
   
   // Right hip angle
-  try {
-    const rightHipAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
-      getLandmark(POSE_LANDMARKS.RIGHT_HIP),
-      getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
-    )
-    angles.push({ joint: "right_hip", angle: rightHipAngle })
-  } catch (e) {
-    console.warn("Could not calculate right hip angle")
+  if (shouldTrack("right_hip")) {
+    try {
+      const rightHipAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP),
+        getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
+      )
+      angles.push({ joint: "right_hip", angle: rightHipAngle })
+    } catch (e) {
+      console.warn("Could not calculate right hip angle")
+    }
   }
   
   // Left shoulder angle (elbow-shoulder-hip)
-  try {
-    const leftShoulderAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
-      getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
-      getLandmark(POSE_LANDMARKS.LEFT_HIP)
-    )
-    angles.push({ joint: "left_shoulder", angle: leftShoulderAngle })
-  } catch (e) {
-    console.warn("Could not calculate left shoulder angle")
+  if (shouldTrack("left_shoulder")) {
+    try {
+      const leftShoulderAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_HIP)
+      )
+      angles.push({ joint: "left_shoulder", angle: leftShoulderAngle })
+    } catch (e) {
+      console.warn("Could not calculate left shoulder angle")
+    }
   }
   
   // Right shoulder angle
-  try {
-    const rightShoulderAngle = calculateAngle(
-      getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
-      getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
-      getLandmark(POSE_LANDMARKS.RIGHT_HIP)
-    )
-    angles.push({ joint: "right_shoulder", angle: rightShoulderAngle })
-  } catch (e) {
-    console.warn("Could not calculate right shoulder angle")
+  if (shouldTrack("right_shoulder")) {
+    try {
+      const rightShoulderAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP)
+      )
+      angles.push({ joint: "right_shoulder", angle: rightShoulderAngle })
+    } catch (e) {
+      console.warn("Could not calculate right shoulder angle")
+    }
+  }
+  
+  // Left ankle angle (knee-ankle-foot)
+  if (shouldTrack("left_ankle")) {
+    try {
+      const leftAnkleAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_KNEE),
+        getLandmark(POSE_LANDMARKS.LEFT_ANKLE),
+        getLandmark(POSE_LANDMARKS.LEFT_FOOT_INDEX)
+      )
+      angles.push({ joint: "left_ankle", angle: leftAnkleAngle })
+    } catch (e) {
+      console.warn("Could not calculate left ankle angle")
+    }
+  }
+  
+  // Right ankle angle
+  if (shouldTrack("right_ankle")) {
+    try {
+      const rightAnkleAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
+        getLandmark(POSE_LANDMARKS.RIGHT_ANKLE),
+        getLandmark(POSE_LANDMARKS.RIGHT_FOOT_INDEX)
+      )
+      angles.push({ joint: "right_ankle", angle: rightAnkleAngle })
+    } catch (e) {
+      console.warn("Could not calculate right ankle angle")
+    }
   }
   
   return angles
