@@ -141,9 +141,11 @@ const POSE_LANDMARKS = {
 
 /**
  * Calculate angle between three points (in degrees)
+ * This is the interior angle at point b, formed by vectors b->a and b->c
  * @param a First point [x, y]
  * @param b Middle point (vertex) [x, y]
  * @param c Third point [x, y]
+ * @returns Angle in degrees (0-180)
  */
 function calculateAngle(a: number[], b: number[], c: number[]): number {
   const radians =
@@ -196,20 +198,20 @@ function calculateSegmentAngleFromHorizontal(start: number[], end: number[]): nu
 /**
  * Analyze a video and extract joint movement information
  * @param videoBlob The video blob to analyze
- * @param jointsOfInterest Optional array of joint names to filter (e.g., ["left_knee", "right_knee"])
+ * @param anglesOfInterest Optional array of specific angles to track (e.g., ["left_knee", "right_leg_segment"])
  */
 export async function analyzeVideoForPose(
   videoBlob: Blob,
-  jointsOfInterest?: string[]
+  anglesOfInterest?: string[]
 ): Promise<PoseAnalysisResult> {
   console.log("Starting pose analysis...")
   console.log("Video blob size:", videoBlob.size, "bytes")
   console.log("Video blob type:", videoBlob.type)
   
-  if (jointsOfInterest) {
-    console.log("Tracking joints:", jointsOfInterest.join(", "))
+  if (anglesOfInterest) {
+    console.log("Tracking angles:", anglesOfInterest.join(", "))
   } else {
-    console.log("Tracking all joints")
+    console.log("Tracking all angles")
   }
   
   try {
@@ -288,7 +290,7 @@ export async function analyzeVideoForPose(
         const smoothedLandmarks = landmarkSmoother.smoothLandmarks(rawLandmarks, timestamp)
         
         // Calculate angles from smoothed landmarks
-        const angles = calculateJointAngles(smoothedLandmarks, jointsOfInterest)
+        const angles = calculateJointAngles(smoothedLandmarks, anglesOfInterest)
         
         angles.forEach((angleData) => {
           jointAngles.push({
@@ -333,21 +335,136 @@ export async function analyzeVideoForPose(
 /**
  * Calculate angles for key joints from landmarks
  * @param landmarks The pose landmarks
- * @param jointsOfInterest Optional filter for specific joints
+ * @param anglesOfInterest Optional filter for specific angles
  */
 function calculateJointAngles(
   landmarks: any[],
-  jointsOfInterest?: string[]
+  anglesOfInterest?: string[]
 ): Omit<JointAngle, "timestamp">[] {
   const angles: Omit<JointAngle, "timestamp">[] = []
   
   // Helper to get landmark coordinates
   const getLandmark = (index: number) => [landmarks[index].x, landmarks[index].y]
   
-  // Helper to check if we should track this joint
-  const shouldTrack = (jointName: string) => {
-    if (!jointsOfInterest) return true
-    return jointsOfInterest.includes(jointName)
+  // Helper to check if we should track this angle
+  const shouldTrack = (angleName: string) => {
+    if (!anglesOfInterest) return true
+    return anglesOfInterest.includes(angleName)
+  }
+  
+  // === JOINT ANGLES (3-point angles) ===
+  // These measure the interior angle at a joint, useful for bends/flexion
+  
+  // Left elbow angle (shoulder-elbow-wrist)
+  if (shouldTrack("left_elbow")) {
+    try {
+      const leftElbowAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_WRIST)
+      )
+      angles.push({ joint: "left_elbow", angle: leftElbowAngle })
+    } catch (e) {
+      console.warn("Could not calculate left elbow angle")
+    }
+  }
+  
+  // Right elbow angle (shoulder-elbow-wrist)
+  if (shouldTrack("right_elbow")) {
+    try {
+      const rightElbowAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
+      )
+      angles.push({ joint: "right_elbow", angle: rightElbowAngle })
+    } catch (e) {
+      console.warn("Could not calculate right elbow angle")
+    }
+  }
+  
+  // Left knee angle (hip-knee-ankle)
+  if (shouldTrack("left_knee")) {
+    try {
+      const leftKneeAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_HIP),
+        getLandmark(POSE_LANDMARKS.LEFT_KNEE),
+        getLandmark(POSE_LANDMARKS.LEFT_ANKLE)
+      )
+      angles.push({ joint: "left_knee", angle: leftKneeAngle })
+    } catch (e) {
+      console.warn("Could not calculate left knee angle")
+    }
+  }
+  
+  // Right knee angle (hip-knee-ankle)
+  if (shouldTrack("right_knee")) {
+    try {
+      const rightKneeAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP),
+        getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
+        getLandmark(POSE_LANDMARKS.RIGHT_ANKLE)
+      )
+      angles.push({ joint: "right_knee", angle: rightKneeAngle })
+    } catch (e) {
+      console.warn("Could not calculate right knee angle")
+    }
+  }
+  
+  // Left hip angle (shoulder-hip-knee)
+  if (shouldTrack("left_hip")) {
+    try {
+      const leftHipAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_HIP),
+        getLandmark(POSE_LANDMARKS.LEFT_KNEE)
+      )
+      angles.push({ joint: "left_hip", angle: leftHipAngle })
+    } catch (e) {
+      console.warn("Could not calculate left hip angle")
+    }
+  }
+  
+  // Right hip angle (shoulder-hip-knee)
+  if (shouldTrack("right_hip")) {
+    try {
+      const rightHipAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP),
+        getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
+      )
+      angles.push({ joint: "right_hip", angle: rightHipAngle })
+    } catch (e) {
+      console.warn("Could not calculate right hip angle")
+    }
+  }
+  
+  // Left shoulder angle (elbow-shoulder-hip)
+  if (shouldTrack("left_shoulder")) {
+    try {
+      const leftShoulderAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_HIP)
+      )
+      angles.push({ joint: "left_shoulder", angle: leftShoulderAngle })
+    } catch (e) {
+      console.warn("Could not calculate left shoulder angle")
+    }
+  }
+  
+  // Right shoulder angle (elbow-shoulder-hip)
+  if (shouldTrack("right_shoulder")) {
+    try {
+      const rightShoulderAngle = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP)
+      )
+      angles.push({ joint: "right_shoulder", angle: rightShoulderAngle })
+    } catch (e) {
+      console.warn("Could not calculate right shoulder angle")
+    }
   }
   
   // === SEGMENT ANGLES (Line angles relative to vertical) ===
@@ -596,28 +713,65 @@ function generateSummary(movements: MovementSequence[]): string {
   
   const summaryLines: string[] = []
   
-  movements.forEach((movement, index) => {
-    const segmentName = movement.joint
-      .replace("_segment", "")
-      .replace("_", " ")
-      .toUpperCase()
-    
-    const totalChange = Math.abs(movement.angleDelta).toFixed(1)
-    
-    // Determine movement direction
-    let direction = ""
-    if (movement.angleDelta > 0) {
-      direction = "raised/moved away"
-    } else {
-      direction = "lowered/moved toward vertical"
-    }
-    
-    summaryLines.push(
-      `${index + 1}. ${segmentName}: ${direction} by ${totalChange}° ` +
-      `(from ${movement.startAngle.toFixed(1)}° to ${movement.endAngle.toFixed(1)}°) ` +
-      `at ${movement.startTime.toFixed(1)}s for ${movement.duration.toFixed(1)}s`
-    )
-  })
+  // Group movements by type (joint angles vs segment angles)
+  const jointMovements = movements.filter((m) => !m.joint.includes("_segment"))
+  const segmentMovements = movements.filter((m) => m.joint.includes("_segment"))
+  
+  if (jointMovements.length > 0) {
+    summaryLines.push("=== JOINT ANGLES (Flexion/Extension) ===")
+    jointMovements.forEach((movement, index) => {
+      const jointName = movement.joint
+        .replace("_", " ")
+        .toUpperCase()
+      
+      const totalChange = Math.abs(movement.angleDelta).toFixed(1)
+      const changeDirection = movement.angleDelta > 0 ? "+" : ""
+      
+      // Determine movement type for joints
+      let movementType = ""
+      if (movement.joint.includes("knee") || movement.joint.includes("elbow")) {
+        movementType = movement.angleDelta < 0 ? "flexed (bent)" : "extended (straightened)"
+      } else if (movement.joint.includes("hip") || movement.joint.includes("shoulder")) {
+        movementType = movement.angleDelta < 0 ? "closed" : "opened"
+      } else {
+        movementType = movement.angleDelta > 0 ? "increased" : "decreased"
+      }
+      
+      summaryLines.push(
+        `${index + 1}. ${jointName}: ${movementType} by ${totalChange}° ` +
+        `(went from ${movement.startAngle.toFixed(0)}° to ${movement.endAngle.toFixed(0)}°, change: ${changeDirection}${movement.angleDelta.toFixed(1)}°) ` +
+        `at ${movement.startTime.toFixed(1)}s for ${movement.duration.toFixed(1)}s`
+      )
+    })
+  }
+  
+  if (segmentMovements.length > 0) {
+    if (jointMovements.length > 0) summaryLines.push("")
+    summaryLines.push("=== SEGMENT ANGLES (Relative to Vertical) ===")
+    segmentMovements.forEach((movement, index) => {
+      const segmentName = movement.joint
+        .replace("_segment", "")
+        .replace("_", " ")
+        .toUpperCase()
+      
+      const totalChange = Math.abs(movement.angleDelta).toFixed(1)
+      const changeDirection = movement.angleDelta > 0 ? "+" : ""
+      
+      // Determine movement direction for segments
+      let direction = ""
+      if (movement.angleDelta > 0) {
+        direction = "raised/moved away from vertical"
+      } else {
+        direction = "lowered/moved toward vertical"
+      }
+      
+      summaryLines.push(
+        `${index + 1}. ${segmentName}: ${direction} by ${totalChange}° ` +
+        `(went from ${movement.startAngle.toFixed(0)}° to ${movement.endAngle.toFixed(0)}°, change: ${changeDirection}${movement.angleDelta.toFixed(1)}°) ` +
+        `at ${movement.startTime.toFixed(1)}s for ${movement.duration.toFixed(1)}s`
+      )
+    })
+  }
   
   return summaryLines.join("\n")
 }

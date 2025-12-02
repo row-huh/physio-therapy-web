@@ -1,93 +1,101 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { VideoRecorder } from "@/components/video-recorder"
-import { getAllExercises, getExercise } from "@/lib/pose-store"
-import { calculatePoseSimilarity, type Pose } from "@/lib/pose-utils"
+import { getAllExercises } from "@/lib/pose-store"
 import Link from "next/link"
-
-interface ComparisonResult {
-  referencePose: string
-  similarity: number
-  feedback: string
-}
+import { Play, Video, ArrowLeft } from "lucide-react"
 
 export default function ComparePage() {
-  const [step, setStep] = useState<"select" | "record" | "results">("select")
   const [exercises, setExercises] = useState<any[]>([])
   const [selectedExercise, setSelectedExercise] = useState<any>(null)
-  const [userPoses, setUserPoses] = useState<Pose[]>([])
-  const [results, setResults] = useState<ComparisonResult[]>([])
+  const [isWebcamActive, setIsWebcamActive] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const webcamRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     setExercises(getAllExercises())
   }, [])
 
-  const handleSelectExercise = (exerciseId: string) => {
-    const exercise = getExercise(exerciseId)
-    if (exercise) {
-      setSelectedExercise(exercise)
-      setStep("record")
+  useEffect(() => {
+    if (isWebcamActive) {
+      startWebcam()
+    } else {
+      stopWebcam()
+    }
+    
+    return () => {
+      stopWebcam()
+    }
+  }, [isWebcamActive])
+
+  const startWebcam = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 },
+        audio: false,
+      })
+      
+      if (webcamRef.current) {
+        webcamRef.current.srcObject = stream
+        webcamRef.current.play()
+      }
+    } catch (error) {
+      console.error("Error accessing webcam:", error)
+      alert("Could not access webcam. Please check permissions.")
     }
   }
 
-  const handlePoseCaptured = (pose: Pose) => {
-    setUserPoses([...userPoses, pose])
+  const stopWebcam = () => {
+    if (webcamRef.current && webcamRef.current.srcObject) {
+      const stream = webcamRef.current.srcObject as MediaStream
+      stream.getTracks().forEach((track) => track.stop())
+      webcamRef.current.srcObject = null
+    }
   }
 
-  const generateFeedback = (similarity: number): string => {
-    if (similarity > 0.85) return "Excellent form! Nearly identical to reference."
-    if (similarity > 0.7) return "Good form. Minor adjustments needed."
-    if (similarity > 0.5) return "Fair form. Check your alignment and depth."
-    return "Needs improvement. Review the reference position."
+  const handleSelectExercise = (exerciseId: string) => {
+    const exercise = exercises.find((ex) => ex.id === exerciseId)
+    if (exercise) {
+      setSelectedExercise(exercise)
+      setIsWebcamActive(true)
+    }
   }
 
-  const handleCompare = () => {
-    if (userPoses.length === 0 || !selectedExercise) return
-
-    const comparisonResults: ComparisonResult[] = []
-
-    // Compare each user pose to all reference poses
-    userPoses.forEach((userPose) => {
-      selectedExercise.keyPoses.forEach((refPose: any) => {
-        const similarity = calculatePoseSimilarity(userPose, refPose.pose)
-        comparisonResults.push({
-          referencePose: refPose.name,
-          similarity,
-          feedback: generateFeedback(similarity),
-        })
-      })
-    })
-
-    // Sort by similarity descending
-    comparisonResults.sort((a, b) => b.similarity - a.similarity)
-    setResults(comparisonResults)
-    setStep("results")
+  const handleBack = () => {
+    setSelectedExercise(null)
+    setIsWebcamActive(false)
   }
 
   return (
     <main className="min-h-screen bg-background p-8">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <Link href="/">
-          <Button variant="outline" className="mb-6 bg-transparent">
-            Back
+          <Button variant="outline" className="mb-6">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Home
           </Button>
         </Link>
 
-        {step === "select" && (
+        {!selectedExercise ? (
           <div className="space-y-6">
             <div>
               <h1 className="text-3xl font-bold mb-2">Compare Your Exercise</h1>
-              <p className="text-muted-foreground">Select a reference exercise to compare against</p>
+              <p className="text-muted-foreground">
+                Select a reference exercise to compare against your live performance
+              </p>
             </div>
 
             {exercises.length === 0 ? (
               <Card className="p-8 text-center">
-                <p className="text-muted-foreground mb-4">No exercises created yet</p>
+                <p className="text-muted-foreground mb-4">No reference exercises recorded yet</p>
                 <Link href="/record">
-                  <Button>Create a Reference Exercise</Button>
+                  <Button>
+                    <Video className="w-4 h-4 mr-2" />
+                    Record Reference Exercise
+                  </Button>
                 </Link>
               </Card>
             ) : (
@@ -102,11 +110,13 @@ export default function ComparePage() {
                       <div>
                         <h3 className="font-semibold">{exercise.name}</h3>
                         <p className="text-sm text-muted-foreground">
-                          {exercise.keyPoses.length} key pose{exercise.keyPoses.length !== 1 ? "s" : ""}
+                          {exercise.type.replace("-", " ")} • Recorded{" "}
+                          {new Date(exercise.timestamp).toLocaleDateString()}
                         </p>
                       </div>
                       <Button variant="secondary" size="sm">
-                        Select
+                        <Play className="w-4 h-4 mr-2" />
+                        Compare
                       </Button>
                     </div>
                   </Card>
@@ -114,106 +124,78 @@ export default function ComparePage() {
               </div>
             )}
           </div>
-        )}
-
-        {step === "record" && selectedExercise && (
+        ) : (
           <div className="space-y-6">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">Record Your Exercise</h1>
-              <p className="text-muted-foreground">
-                Perform {selectedExercise.name} while the camera records your poses
-              </p>
-            </div>
-
-            <VideoRecorder onPoseCaptured={handlePoseCaptured} />
-
-            {userPoses.length > 0 && (
-              <Card className="p-6 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
-                <p className="text-sm">
-                  <span className="font-semibold">{userPoses.length}</span> pose{userPoses.length !== 1 ? "s" : ""}{" "}
-                  captured
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-bold mb-2">Comparing: {selectedExercise.name}</h1>
+                <p className="text-muted-foreground">
+                  Reference video will loop - perform the exercise to compare
                 </p>
-              </Card>
-            )}
-
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSelectedExercise(null)
-                  setUserPoses([])
-                  setStep("select")
-                }}
-                className="flex-1"
-              >
+              </div>
+              <Button variant="outline" onClick={handleBack}>
+                <ArrowLeft className="w-4 h-4 mr-2" />
                 Back
               </Button>
-              <Button onClick={handleCompare} disabled={userPoses.length === 0} className="flex-1">
-                Compare Poses
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === "results" && (
-          <div className="space-y-6">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">Comparison Results</h1>
-              <p className="text-muted-foreground">How your poses compare to the reference</p>
             </div>
 
-            {results.length > 0 ? (
-              <div className="space-y-4">
-                {results.map((result, idx) => (
-                  <Card key={idx} className="p-6">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-semibold">{result.referencePose}</h3>
-                        <span className="text-lg font-bold">{(result.similarity * 100).toFixed(0)}%</span>
-                      </div>
-
-                      <div className="w-full bg-muted rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full transition-all ${
-                            result.similarity > 0.7
-                              ? "bg-green-500"
-                              : result.similarity > 0.5
-                                ? "bg-yellow-500"
-                                : "bg-red-500"
-                          }`}
-                          style={{ width: `${result.similarity * 100}%` }}
-                        />
-                      </div>
-
-                      <p className="text-sm text-muted-foreground">{result.feedback}</p>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <Card className="p-8 text-center">
-                <p className="text-muted-foreground">No comparison results available</p>
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Reference Video */}
+              <Card className="p-4">
+                <h3 className="font-semibold mb-3">Reference Video</h3>
+                <div className="relative aspect-video bg-black rounded overflow-hidden">
+                  <video
+                    ref={videoRef}
+                    src={selectedExercise.videoUrl}
+                    className="w-full h-full object-contain"
+                    loop
+                    autoPlay
+                    muted
+                  />
+                  <canvas
+                    ref={canvasRef}
+                    className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                  />
+                </div>
+                <div className="mt-3 text-sm text-muted-foreground">
+                  <p>Looping reference video with pose overlay</p>
+                </div>
               </Card>
-            )}
 
-            <div className="flex gap-3">
-              <Link href="/" className="flex-1">
-                <Button variant="outline" className="w-full bg-transparent">
-                  Home
-                </Button>
-              </Link>
-              <Button
-                onClick={() => {
-                  setSelectedExercise(null)
-                  setUserPoses([])
-                  setResults([])
-                  setStep("select")
-                }}
-                className="flex-1"
-              >
-                Compare Another
-              </Button>
+              {/* Live Webcam */}
+              <Card className="p-4">
+                <h3 className="font-semibold mb-3">Your Performance (Live)</h3>
+                <div className="relative aspect-video bg-black rounded overflow-hidden">
+                  {isWebcamActive ? (
+                    <video
+                      ref={webcamRef}
+                      className="w-full h-full object-contain"
+                      autoPlay
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                      <p>Webcam starting...</p>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 text-sm text-muted-foreground">
+                  <p>Live webcam feed - pose detection coming soon</p>
+                </div>
+              </Card>
             </div>
+
+            {/* Comparison Info */}
+            <Card className="p-6 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+              <h3 className="font-semibold mb-2">How to Compare</h3>
+              <ul className="text-sm space-y-1 text-muted-foreground">
+                <li>• Watch the reference video on the left</li>
+                <li>• Perform the same exercise in front of your webcam</li>
+                <li>• Real-time angle comparison will show on both sides</li>
+                <li>• Rep counting will track your progress</li>
+              </ul>
+            </Card>
           </div>
         )}
       </div>

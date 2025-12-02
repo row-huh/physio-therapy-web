@@ -74,14 +74,14 @@ export default function RecordPage() {
       try {
         console.log("Starting video analysis...")
         
-        // Get joints of interest for the selected exercise type
+        // Get angles of interest for the selected exercise type
         const exerciseConfig = getExerciseConfig(exerciseType)
-        const jointsOfInterest = exerciseConfig?.jointsOfInterest
+        const anglesOfInterest = exerciseConfig?.anglesOfInterest
         
         console.log(`Analyzing for exercise: ${exerciseConfig?.name}`)
-        console.log(`Joints of interest:`, jointsOfInterest)
+        console.log(`Angles of interest:`, anglesOfInterest)
         
-        const result = await analyzeVideoForPose(recordedBlob, jointsOfInterest)
+        const result = await analyzeVideoForPose(recordedBlob, anglesOfInterest)
         setAnalysisResult(result)
         
         console.log("Analysis complete!")
@@ -135,9 +135,9 @@ export default function RecordPage() {
                   {getExerciseConfig(exerciseType)?.description}
                 </p>
                 <div className="text-xs text-muted-foreground mt-2">
-                  <strong>Tracked joints:</strong>{" "}
+                  <strong>Tracked angles:</strong>{" "}
                   {getExerciseConfig(exerciseType)
-                    ?.jointsOfInterest.map((j) => j.replace("_", " "))
+                    ?.anglesOfInterest.map((a: string) => a.replace("_", " "))
                     .join(", ")}
                 </div>
               </div>
@@ -261,7 +261,7 @@ export default function RecordPage() {
               <div className="mt-2 text-sm bg-muted p-3 rounded-lg">
                 <strong>Tracking:</strong>{" "}
                 {getExerciseConfig(exerciseType)
-                  ?.jointsOfInterest.map((j) => j.replace("_", " ").toUpperCase())
+                  ?.anglesOfInterest.map((a) => a.replace("_", " ").toUpperCase())
                   .join(", ")}
               </div>
             </div>
@@ -345,7 +345,7 @@ export default function RecordPage() {
                   </h3>
                   <p className="text-sm text-muted-foreground">
                     Analyzed joints: {getExerciseConfig(exerciseType)
-                      ?.jointsOfInterest.map((j) => j.replace("_", " "))
+                      ?.anglesOfInterest.map((a) => a.replace("_", " "))
                       .join(", ")}
                   </p>
                 </Card>
@@ -354,7 +354,7 @@ export default function RecordPage() {
                 <VideoAnalysisPlayer
                   videoBlob={recordedBlob}
                   movements={analysisResult.movements}
-                  jointsOfInterest={getExerciseConfig(exerciseType)?.jointsOfInterest}
+                  anglesOfInterest={getExerciseConfig(exerciseType)?.anglesOfInterest}
                 />
 
                 <Card className="p-6">
@@ -389,11 +389,94 @@ export default function RecordPage() {
 
                 <Card className="p-6">
                   <h3 className="font-semibold mb-4">
-                    Joint Angle Data Points ({analysisResult.jointAngles.length})
+                    Angle Data ({analysisResult.jointAngles.length} measurements)
                   </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Total angle measurements captured across tracked joints throughout the video
+                  <p className="text-sm text-muted-foreground mb-4">
+                    All angle measurements captured throughout the video
                   </p>
+                  
+                  {/* Group angles by joint/segment */}
+                  <div className="space-y-4 max-h-96 overflow-y-auto">
+                    {(() => {
+                      // Group joint angles by joint name
+                      const groupedAngles = analysisResult.jointAngles.reduce((acc, ja) => {
+                        if (!acc[ja.joint]) {
+                          acc[ja.joint] = []
+                        }
+                        acc[ja.joint].push(ja)
+                        return acc
+                      }, {} as Record<string, typeof analysisResult.jointAngles>)
+                      
+                      return Object.entries(groupedAngles).map(([joint, angles]) => {
+                        // Calculate statistics
+                        const values = angles.map(a => a.angle)
+                        const min = Math.min(...values)
+                        const max = Math.max(...values)
+                        const avg = values.reduce((sum, v) => sum + v, 0) / values.length
+                        
+                        return (
+                          <div key={joint} className="p-4 bg-muted rounded border-l-4 border-blue-500">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="font-medium text-base">
+                                {joint.replace("_segment", "").replace("_", " ").toUpperCase()}
+                              </h4>
+                              <span className="text-xs text-muted-foreground">
+                                {angles.length} points
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-3 gap-4 text-sm">
+                              <div>
+                                <div className="text-xs text-muted-foreground">Min</div>
+                                <div className="font-semibold text-lg">{min.toFixed(1)}°</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-muted-foreground">Avg</div>
+                                <div className="font-semibold text-lg">{avg.toFixed(1)}°</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-muted-foreground">Max</div>
+                                <div className="font-semibold text-lg">{max.toFixed(1)}°</div>
+                              </div>
+                            </div>
+                            
+                            <div className="mt-3">
+                              <div className="text-xs text-muted-foreground mb-1">Range of Motion</div>
+                              <div className="w-full bg-background rounded-full h-2 relative overflow-hidden">
+                                <div 
+                                  className="absolute h-full bg-blue-500 rounded-full"
+                                  style={{
+                                    left: `${(min / 180) * 100}%`,
+                                    width: `${((max - min) / 180) * 100}%`
+                                  }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                                <span>0°</span>
+                                <span>{(max - min).toFixed(1)}° range</span>
+                                <span>180°</span>
+                              </div>
+                            </div>
+                            
+                            {/* Show first, middle, and last values as samples */}
+                            <details className="mt-3">
+                              <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                                Show sample values
+                              </summary>
+                              <div className="mt-2 space-y-1 text-xs">
+                                {[0, Math.floor(angles.length / 2), angles.length - 1].map((idx) => (
+                                  <div key={idx} className="flex justify-between">
+                                    <span>Time: {angles[idx].timestamp.toFixed(2)}s</span>
+                                    <span className="font-mono">{angles[idx].angle.toFixed(1)}°</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          </div>
+                        )
+                      })
+                    })()}
+                  </div>
                 </Card>
 
                 <Button

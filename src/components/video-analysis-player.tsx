@@ -72,10 +72,10 @@ class OneEuroFilter {
 interface VideoAnalysisPlayerProps {
   videoBlob: Blob
   movements: MovementSequence[]
-  jointsOfInterest?: string[]
+  anglesOfInterest?: string[]
 }
 
-export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: VideoAnalysisPlayerProps) {
+export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: VideoAnalysisPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -206,9 +206,11 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
           [26, 28], // Right leg
         ]
 
-        // Draw connections
+        // Draw connections (thicker lines for stability)
         ctx.strokeStyle = "#00ff00"
-        ctx.lineWidth = 3
+        ctx.lineWidth = 6
+        ctx.lineCap = "round"
+        ctx.lineJoin = "round"
         connections.forEach(([start, end]) => {
           const startPoint = landmarks[start]
           const endPoint = landmarks[end]
@@ -221,16 +223,20 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
           }
         })
 
-        // Draw landmarks
+        // Draw landmarks (bigger points for stability)
         landmarks.forEach((landmark: any, index: number) => {
           ctx.beginPath()
-          ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI)
+          ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 8, 0, 2 * Math.PI)
           ctx.fillStyle = "#ff0000"
           ctx.fill()
+          // Add a white border for better visibility
+          ctx.strokeStyle = "#ffffff"
+          ctx.lineWidth = 2
+          ctx.stroke()
         })
 
-        // Draw segment angles for tracked joints
-        drawSegmentAngles(ctx, landmarks, canvas.width, canvas.height)
+        // Draw joint angles and segment angles for tracked joints
+        drawAngles(ctx, landmarks, canvas.width, canvas.height)
       }
     } catch (error) {
       console.error("Error drawing pose:", error)
@@ -242,18 +248,177 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
     animationFrameRef.current = requestAnimationFrame(drawPoseAndAnnotations)
   }
 
-  const drawSegmentAngles = (
+  const drawAngles = (
     ctx: CanvasRenderingContext2D,
     landmarks: any[],
     width: number,
     height: number
   ) => {
-    const shouldTrack = (jointName: string) => {
-      if (!jointsOfInterest) return true
-      return jointsOfInterest.includes(jointName)
+    const shouldTrack = (angleName: string) => {
+      if (!anglesOfInterest) return true
+      return anglesOfInterest.includes(angleName)
     }
 
-    // Draw right leg segment angle if tracking
+    // Helper to calculate 3-point angle
+    const calculateAngle = (a: number[], b: number[], c: number[]): number => {
+      const radians = Math.atan2(c[1] - b[1], c[0] - b[0]) - Math.atan2(a[1] - b[1], a[0] - b[0])
+      let angle = Math.abs((radians * 180.0) / Math.PI)
+      if (angle > 180.0) {
+        angle = 360.0 - angle
+      }
+      return angle
+    }
+
+    // === JOINT ANGLES (3-point) ===
+    
+    // Right knee angle (hip-knee-ankle)
+    if (shouldTrack("right_knee")) {
+      const hip = landmarks[24]
+      const knee = landmarks[26]
+      const ankle = landmarks[28]
+
+      if (hip && knee && ankle) {
+        const angle = calculateAngle(
+          [hip.x * width, hip.y * height],
+          [knee.x * width, knee.y * height],
+          [ankle.x * width, ankle.y * height]
+        )
+
+        // Draw angle text at knee
+        ctx.fillStyle = "#00ffff"
+        ctx.font = "bold 18px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 3
+        const text = `${angle.toFixed(0)}°`
+        ctx.strokeText(text, knee.x * width + 15, knee.y * height - 10)
+        ctx.fillText(text, knee.x * width + 15, knee.y * height - 10)
+      }
+    }
+
+    // Left knee angle (hip-knee-ankle)
+    if (shouldTrack("left_knee")) {
+      const hip = landmarks[23]
+      const knee = landmarks[25]
+      const ankle = landmarks[27]
+
+      if (hip && knee && ankle) {
+        const angle = calculateAngle(
+          [hip.x * width, hip.y * height],
+          [knee.x * width, knee.y * height],
+          [ankle.x * width, ankle.y * height]
+        )
+
+        // Draw angle text at knee
+        ctx.fillStyle = "#00ffff"
+        ctx.font = "bold 18px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 3
+        const text = `${angle.toFixed(0)}°`
+        ctx.strokeText(text, knee.x * width - 55, knee.y * height - 10)
+        ctx.fillText(text, knee.x * width - 55, knee.y * height - 10)
+      }
+    }
+
+    // Right elbow angle (shoulder-elbow-wrist)
+    if (shouldTrack("right_elbow")) {
+      const shoulder = landmarks[12]
+      const elbow = landmarks[14]
+      const wrist = landmarks[16]
+
+      if (shoulder && elbow && wrist) {
+        const angle = calculateAngle(
+          [shoulder.x * width, shoulder.y * height],
+          [elbow.x * width, elbow.y * height],
+          [wrist.x * width, wrist.y * height]
+        )
+
+        // Draw angle text at elbow
+        ctx.fillStyle = "#ff00ff"
+        ctx.font = "bold 16px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 3
+        const text = `${angle.toFixed(0)}°`
+        ctx.strokeText(text, elbow.x * width + 12, elbow.y * height)
+        ctx.fillText(text, elbow.x * width + 12, elbow.y * height)
+      }
+    }
+
+    // Left elbow angle (shoulder-elbow-wrist)
+    if (shouldTrack("left_elbow")) {
+      const shoulder = landmarks[11]
+      const elbow = landmarks[13]
+      const wrist = landmarks[15]
+
+      if (shoulder && elbow && wrist) {
+        const angle = calculateAngle(
+          [shoulder.x * width, shoulder.y * height],
+          [elbow.x * width, elbow.y * height],
+          [wrist.x * width, wrist.y * height]
+        )
+
+        // Draw angle text at elbow
+        ctx.fillStyle = "#ff00ff"
+        ctx.font = "bold 16px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 3
+        const text = `${angle.toFixed(0)}°`
+        ctx.strokeText(text, elbow.x * width - 50, elbow.y * height)
+        ctx.fillText(text, elbow.x * width - 50, elbow.y * height)
+      }
+    }
+
+    // Right hip angle (shoulder-hip-knee)
+    if (shouldTrack("right_hip")) {
+      const shoulder = landmarks[12]
+      const hip = landmarks[24]
+      const knee = landmarks[26]
+
+      if (shoulder && hip && knee) {
+        const angle = calculateAngle(
+          [shoulder.x * width, shoulder.y * height],
+          [hip.x * width, hip.y * height],
+          [knee.x * width, knee.y * height]
+        )
+
+        // Draw angle text at hip
+        ctx.fillStyle = "#ffaa00"
+        ctx.font = "bold 16px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 3
+        const text = `${angle.toFixed(0)}°`
+        ctx.strokeText(text, hip.x * width + 12, hip.y * height + 5)
+        ctx.fillText(text, hip.x * width + 12, hip.y * height + 5)
+      }
+    }
+
+    // Left hip angle (shoulder-hip-knee)
+    if (shouldTrack("left_hip")) {
+      const shoulder = landmarks[11]
+      const hip = landmarks[23]
+      const knee = landmarks[25]
+
+      if (shoulder && hip && knee) {
+        const angle = calculateAngle(
+          [shoulder.x * width, shoulder.y * height],
+          [hip.x * width, hip.y * height],
+          [knee.x * width, knee.y * height]
+        )
+
+        // Draw angle text at hip
+        ctx.fillStyle = "#ffaa00"
+        ctx.font = "bold 16px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 3
+        const text = `${angle.toFixed(0)}°`
+        ctx.strokeText(text, hip.x * width - 50, hip.y * height + 5)
+        ctx.fillText(text, hip.x * width - 50, hip.y * height + 5)
+      }
+    }
+
+    // === SEGMENT ANGLES (for reference - smaller text) ===
+    // These show the angle relative to vertical
+
+    // Right leg segment angle if tracking
     if (shouldTrack("right_knee") || shouldTrack("right_ankle")) {
       const knee = landmarks[26]
       const ankle = landmarks[28]
@@ -264,23 +429,23 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
         const ankleX = ankle.x * width
         const ankleY = ankle.y * height
 
-        // Calculate angle from vertical (already smoothed via landmark filters)
+        // Calculate angle from vertical
         const dx = ankleX - kneeX
         const dy = ankleY - kneeY
         const angle = Math.abs((Math.atan2(dx, dy) * 180) / Math.PI)
 
-        // Draw angle text
-        ctx.fillStyle = "#ffff00"
-        ctx.font = "bold 20px Arial"
+        // Draw smaller angle text (segment angle)
+        ctx.fillStyle = "#ffffff"
+        ctx.font = "12px Arial"
         ctx.strokeStyle = "#000000"
-        ctx.lineWidth = 3
-        const text = `R Leg: ${angle.toFixed(1)}°`
-        ctx.strokeText(text, kneeX + 20, kneeY)
-        ctx.fillText(text, kneeX + 20, kneeY)
+        ctx.lineWidth = 2
+        const text = `seg: ${angle.toFixed(0)}°`
+        ctx.strokeText(text, kneeX + 15, kneeY + 25)
+        ctx.fillText(text, kneeX + 15, kneeY + 25)
       }
     }
 
-    // Draw left leg segment angle if tracking
+    // Left leg segment angle if tracking
     if (shouldTrack("left_knee") || shouldTrack("left_ankle")) {
       const knee = landmarks[25]
       const ankle = landmarks[27]
@@ -291,19 +456,19 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
         const ankleX = ankle.x * width
         const ankleY = ankle.y * height
 
-        // Calculate angle from vertical (already smoothed via landmark filters)
+        // Calculate angle from vertical
         const dx = ankleX - kneeX
         const dy = ankleY - kneeY
         const angle = Math.abs((Math.atan2(dx, dy) * 180) / Math.PI)
 
-        // Draw angle text
-        ctx.fillStyle = "#ffff00"
-        ctx.font = "bold 20px Arial"
+        // Draw smaller angle text (segment angle)
+        ctx.fillStyle = "#ffffff"
+        ctx.font = "12px Arial"
         ctx.strokeStyle = "#000000"
-        ctx.lineWidth = 3
-        const text = `L Leg: ${angle.toFixed(1)}°`
-        ctx.strokeText(text, kneeX - 120, kneeY)
-        ctx.fillText(text, kneeX - 120, kneeY)
+        ctx.lineWidth = 2
+        const text = `seg: ${angle.toFixed(0)}°`
+        ctx.strokeText(text, kneeX - 70, kneeY + 25)
+        ctx.fillText(text, kneeX - 70, kneeY + 25)
       }
     }
   }
@@ -441,7 +606,10 @@ export function VideoAnalysisPlayer({ videoBlob, movements, jointsOfInterest }: 
 
       <div className="mt-4 text-xs text-muted-foreground">
         <p>• Green lines show the detected skeleton</p>
-        <p>• Yellow text shows current segment angles</p>
+        <p>• <span className="text-cyan-400">Cyan angles</span> = Joint angles (knee bend)</p>
+        <p>• <span className="text-purple-400">Purple angles</span> = Elbow angles</p>
+        <p>• <span className="text-orange-400">Orange angles</span> = Hip angles</p>
+        <p>• White "seg:" = Segment angles (relative to vertical)</p>
         <p>• Green bars on timeline indicate detected movements</p>
         <p>• Active movements are displayed at the top during playback</p>
       </div>
