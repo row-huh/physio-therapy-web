@@ -3,70 +3,33 @@
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { getAllExercises } from "@/lib/pose-store"
+import { getAllExercises } from "@/lib/storage"
 import Link from "next/link"
 import { Play, Video, ArrowLeft } from "lucide-react"
+import LiveComparison from "@/components/live-comparison"
 
 export default function ComparePage() {
   const [exercises, setExercises] = useState<any[]>([])
   const [selectedExercise, setSelectedExercise] = useState<any>(null)
-  const [isWebcamActive, setIsWebcamActive] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const webcamRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
-    setExercises(getAllExercises())
+    console.log("🔍 Loading exercises for comparison...")
+    const loadedExercises = getAllExercises()
+    console.log("📊 Loaded exercises:", loadedExercises)
+    setExercises(loadedExercises)
   }, [])
-
-  useEffect(() => {
-    if (isWebcamActive) {
-      startWebcam()
-    } else {
-      stopWebcam()
-    }
-    
-    return () => {
-      stopWebcam()
-    }
-  }, [isWebcamActive])
-
-  const startWebcam = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
-        audio: false,
-      })
-      
-      if (webcamRef.current) {
-        webcamRef.current.srcObject = stream
-        webcamRef.current.play()
-      }
-    } catch (error) {
-      console.error("Error accessing webcam:", error)
-      alert("Could not access webcam. Please check permissions.")
-    }
-  }
-
-  const stopWebcam = () => {
-    if (webcamRef.current && webcamRef.current.srcObject) {
-      const stream = webcamRef.current.srcObject as MediaStream
-      stream.getTracks().forEach((track) => track.stop())
-      webcamRef.current.srcObject = null
-    }
-  }
 
   const handleSelectExercise = (exerciseId: string) => {
     const exercise = exercises.find((ex) => ex.id === exerciseId)
+    console.log("🎯 Selected exercise:", exercise)
     if (exercise) {
       setSelectedExercise(exercise)
-      setIsWebcamActive(true)
     }
   }
 
   const handleBack = () => {
     setSelectedExercise(null)
-    setIsWebcamActive(false)
   }
 
   return (
@@ -152,38 +115,14 @@ export default function ComparePage() {
                     autoPlay
                     muted
                   />
-                  <canvas
-                    ref={canvasRef}
-                    className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                  />
                 </div>
                 <div className="mt-3 text-sm text-muted-foreground">
-                  <p>Looping reference video with pose overlay</p>
+                  <p>Looping reference video</p>
                 </div>
               </Card>
 
               {/* Live Webcam */}
-              <Card className="p-4">
-                <h3 className="font-semibold mb-3">Your Performance (Live)</h3>
-                <div className="relative aspect-video bg-black rounded overflow-hidden">
-                  {isWebcamActive ? (
-                    <video
-                      ref={webcamRef}
-                      className="w-full h-full object-contain"
-                      autoPlay
-                      muted
-                      playsInline
-                    />
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      <p>Webcam starting...</p>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 text-sm text-muted-foreground">
-                  <p>Live webcam feed - pose detection coming soon</p>
-                </div>
-              </Card>
+              <LiveComparison exerciseId={selectedExercise.type} />
             </div>
 
             {/* Comparison Info */}
@@ -192,8 +131,8 @@ export default function ComparePage() {
               <ul className="text-sm space-y-1 text-muted-foreground">
                 <li>• Watch the reference video on the left</li>
                 <li>• Perform the same exercise in front of your webcam</li>
-                <li>• Real-time angle comparison will show on both sides</li>
-                <li>• Rep counting will track your progress</li>
+                <li>• Real-time angles and state will show on the right</li>
+                <li>• Rep counter will track correct/incorrect reps</li>
               </ul>
             </Card>
           </div>

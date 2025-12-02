@@ -23,30 +23,41 @@ export function saveTemplate(
   videoBlob?: Blob
 ): string {
   const templates = getAllTemplates()
-  
+
   const id = `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-  
+
   const savedTemplate: SavedTemplate = {
     id,
     template,
     savedAt: new Date().toISOString(),
   }
-  
-  // Optionally save video blob (large, might exceed localStorage limits)
-  if (videoBlob && videoBlob.size < 5 * 1024 * 1024) { // Only if < 5MB
-    // Convert blob to base64 for storage
-    const reader = new FileReader()
-    reader.readAsDataURL(videoBlob)
-    reader.onloadend = () => {
-      savedTemplate.videoUrl = reader.result as string
+
+  // Avoid storing large base64 video blobs: they quickly exceed localStorage quota.
+  // We only store a tiny preview if the blob is very small (<1MB), otherwise omit videoUrl.
+  if (videoBlob && videoBlob.size <= 1 * 1024 * 1024) {
+    try {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        savedTemplate.videoUrl = reader.result as string
+        templates.push(savedTemplate)
+        tryPersistTemplates(templates)
+      }
+      reader.readAsDataURL(videoBlob)
+    } catch (e) {
+      console.warn("Failed to encode video preview; saving metadata only.", e)
       templates.push(savedTemplate)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(templates))
+      tryPersistTemplates(templates)
     }
   } else {
+    if (videoBlob) {
+      console.info(
+        `Video size ${(videoBlob.size / 1024 / 1024).toFixed(2)}MB too large for inline storage; storing metadata only.`
+      )
+    }
     templates.push(savedTemplate)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates))
+    tryPersistTemplates(templates)
   }
-  
+
   console.log(`✅ Saved template: ${id}`)
   return id
 }
@@ -151,4 +162,62 @@ export function importTemplates(jsonString: string): number {
     console.error("Error importing templates:", error)
     throw new Error("Invalid template file format")
   }
+}
+
+// ---------- Quota Handling & Cleanup Utilities ----------
+
+function tryPersistTemplates(templates: SavedTemplate[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates))
+  } catch (err: any) {
+    if (isQuotaExceeded(err)) {
+      console.warn("⚠️ Quota exceeded while saving templates. Attempting to remove video previews…")
+      // Remove videoUrl fields from newest backwards until success
+      for (let i = templates.length - 1; i >= 0; i--) {
+        if (templates[i].videoUrl) {
+          delete templates[i].videoUrl
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(templates))
+            console.info("✅ Saved after removing inline previews.")
+            return
+          } catch (e) {
+            // continue cleanup
+          }
+        }
+      }
+      // Final fallback: store minimal template data only
+      const minimal = templates.map(t => ({ id: t.id, savedAt: t.savedAt, template: t.template }))
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal))
+        console.info("✅ Stored minimal template data after cleanup.")
+      } catch (e2) {
+        console.error("❌ Failed to persist minimal template data.", e2)
+      }
+    } else {
+      console.error("Error persisting templates:", err)
+    }
+  }
+}
+
+function isQuotaExceeded(error: any): boolean {
+  if (!error) return false
+  return (
+    error.name === "QuotaExceededError" ||
+    error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    (typeof error.message === "string" && error.message.toLowerCase().includes("quota"))
+  )
+}
+
+export function purgeTemplateVideoPreviews(): number {
+  const templates = getAllTemplates()
+  let removed = 0
+  templates.forEach(t => {
+    if (t.videoUrl) {
+      delete t.videoUrl
+      removed++
+    }
+  })
+  tryPersistTemplates(templates)
+  console.log(`🧹 Purged ${removed} inline video previews from templates.`)
+  return removed
 }
