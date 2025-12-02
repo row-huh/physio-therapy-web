@@ -4,10 +4,58 @@ import { useRef, useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { initializePoseDetector, detectPose, type Pose } from "@/lib/pose-utils"
-import { getWebcamStream, drawSkeletonOnCanvas } from "@/components/video-recorder"
 
 interface VideoRecorderProps {
   onPoseCaptured?: (pose: Pose) => void
+}
+
+// Utility function to get webcam stream
+async function getWebcamStream(): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
+    video: { width: 640, height: 480 },
+    audio: false,
+  })
+}
+
+// Utility function to draw skeleton on canvas
+function drawSkeletonOnCanvas(canvas: HTMLCanvasElement, pose: Pose) {
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return
+
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+  // Draw keypoints
+  pose.keypoints.forEach((keypoint) => {
+    if (keypoint.score && keypoint.score > 0.3) {
+      ctx.beginPath()
+      ctx.arc(keypoint.x * canvas.width, keypoint.y * canvas.height, 5, 0, 2 * Math.PI)
+      ctx.fillStyle = "#00ff00"
+      ctx.fill()
+    }
+  })
+
+  // Draw connections (skeleton lines)
+  const connections = [
+    [5, 6], [5, 7], [7, 9], [6, 8], [8, 10], // Arms
+    [5, 11], [6, 12], [11, 12], // Torso
+    [11, 13], [13, 15], [12, 14], [14, 16], // Legs
+  ]
+
+  ctx.strokeStyle = "#00ff00"
+  ctx.lineWidth = 2
+
+  connections.forEach(([start, end]) => {
+    const startPoint = pose.keypoints[start]
+    const endPoint = pose.keypoints[end]
+
+    if (startPoint.score && startPoint.score > 0.3 && endPoint.score && endPoint.score > 0.3) {
+      ctx.beginPath()
+      ctx.moveTo(startPoint.x * canvas.width, startPoint.y * canvas.height)
+      ctx.lineTo(endPoint.x * canvas.width, endPoint.y * canvas.height)
+      ctx.stroke()
+    }
+  })
 }
 
 export function VideoRecorder({ onPoseCaptured }: VideoRecorderProps) {

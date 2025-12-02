@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,6 +9,7 @@ import { SimpleRecorder } from "@/components/simple-recorder"
 import { createExercise, addKeyPose, type Exercise } from "@/lib/pose-store"
 import { saveExerciseVideo } from "@/lib/storage"
 import type { Pose } from "@/lib/pose-utils"
+import { analyzeVideoForPose, type PoseAnalysisResult } from "@/lib/pose-analyzer"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 
@@ -24,12 +25,25 @@ export default function RecordPage() {
   const [capturedPoses, setCapturedPoses] = useState<{ name: string; pose: Pose }[]>([])
   const [poseName, setPoseName] = useState("")
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisResult, setAnalysisResult] = useState<PoseAnalysisResult | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleCreateExercise = () => {
     if (exerciseName.trim()) {
       const newExercise = createExercise(exerciseName, exerciseDesc)
       setExercise(newExercise)
       setStep("recording")
+    }
+  }
+
+  const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file && file.type.startsWith("video/")) {
+      setRecordedBlob(file)
+      setStep("complete")
+    } else {
+      alert("Please upload a valid video file")
     }
   }
 
@@ -50,10 +64,31 @@ export default function RecordPage() {
     setStep("complete")
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (exerciseName.trim() && recordedBlob) {
-      saveExerciseVideo(exerciseName, recordedBlob)
-      router.push("/")
+      setIsAnalyzing(true)
+      
+      try {
+        console.log("Starting video analysis...")
+        const result = await analyzeVideoForPose(recordedBlob)
+        setAnalysisResult(result)
+        
+        console.log("Analysis complete!")
+        console.log("Joint Angles:", result.jointAngles)
+        console.log("Movements:", result.movements)
+        console.log("Summary:\n", result.summary)
+        
+        // Save the video
+        saveExerciseVideo(exerciseName, recordedBlob)
+        
+        // Show complete step with analysis
+        setStep("complete")
+      } catch (error) {
+        console.error("Error analyzing video:", error)
+        alert("Error analyzing video. Please try again.")
+      } finally {
+        setIsAnalyzing(false)
+      }
     }
   }
 
@@ -183,7 +218,7 @@ export default function RecordPage() {
           <div className="space-y-6">
             <div>
               <h1 className="text-3xl font-bold mb-2">{exerciseName}</h1>
-              <p className="text-muted-foreground">Record your exercise</p>
+              <p className="text-muted-foreground">Record or upload your exercise video</p>
             </div>
 
             <SimpleRecorder onRecordComplete={handleRecordComplete} />
@@ -193,30 +228,130 @@ export default function RecordPage() {
                 Done Recording
               </Button>
             )}
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">Or</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                onChange={handleVideoUpload}
+                className="hidden"
+              />
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full"
+              >
+                Upload Video File
+              </Button>
+              <p className="text-xs text-center text-muted-foreground">
+                Upload a pre-recorded video for analysis
+              </p>
+            </div>
           </div>
         )}
 
         {step === "complete" && recordedBlob && (
           <div className="space-y-6">
             <div>
-              <h1 className="text-3xl font-bold mb-2">Save Exercise</h1>
-              <p className="text-muted-foreground">Your video has been recorded</p>
+              <h1 className="text-3xl font-bold mb-2">
+                {isAnalyzing ? "Analyzing Video..." : analysisResult ? "Analysis Complete" : "Save Exercise"}
+              </h1>
+              <p className="text-muted-foreground">
+                {isAnalyzing
+                  ? "Processing your exercise with MediaPipe..."
+                  : analysisResult
+                    ? "Joint movement analysis results"
+                    : "Your video has been recorded"}
+              </p>
             </div>
 
-            <Button onClick={handleSave} className="w-full">
-              Save Exercise
-            </Button>
+            {isAnalyzing && (
+              <Card className="p-8">
+                <div className="flex flex-col items-center space-y-4">
+                  <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-primary"></div>
+                  <p className="text-sm text-muted-foreground">
+                    Detecting pose landmarks and calculating joint angles...
+                  </p>
+                </div>
+              </Card>
+            )}
 
-            <Button
-              variant="outline"
-              onClick={() => {
-                setRecordedBlob(null)
-                setStep("recording")
-              }}
-              className="w-full"
-            >
-              Record Again
-            </Button>
+            {!isAnalyzing && !analysisResult && (
+              <Button onClick={handleSave} className="w-full">
+                Analyze & Save Exercise
+              </Button>
+            )}
+
+            {analysisResult && (
+              <div className="space-y-4">
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4">Movement Summary</h3>
+                  <pre className="text-xs whitespace-pre-wrap bg-muted p-4 rounded overflow-x-auto">
+                    {analysisResult.summary}
+                  </pre>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4">Detected Movements ({analysisResult.movements.length})</h3>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {analysisResult.movements.map((movement, idx) => (
+                      <div key={idx} className="p-3 bg-muted rounded text-sm">
+                        <div className="font-medium">{movement.joint.replace("_", " ").toUpperCase()}</div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {movement.startAngle.toFixed(1)}° → {movement.endAngle.toFixed(1)}° (Δ{" "}
+                          {Math.abs(movement.angleDelta).toFixed(1)}°)
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Time: {movement.startTime.toFixed(1)}s - {movement.endTime.toFixed(1)}s (
+                          {movement.duration.toFixed(1)}s)
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4">
+                    Joint Angle Data Points ({analysisResult.jointAngles.length})
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Total angle measurements captured across all joints throughout the video
+                  </p>
+                </Card>
+
+                <Button
+                  onClick={() => {
+                    router.push("/")
+                  }}
+                  className="w-full"
+                >
+                  Go to Home
+                </Button>
+              </div>
+            )}
+
+            {!isAnalyzing && !analysisResult && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRecordedBlob(null)
+                  setStep("recording")
+                }}
+                className="w-full"
+              >
+                Record Again
+              </Button>
+            )}
           </div>
         )}
 
