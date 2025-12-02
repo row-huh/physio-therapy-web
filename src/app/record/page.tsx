@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input"
 import { VideoRecorder } from "@/components/video-recorder"
 import { SimpleRecorder } from "@/components/simple-recorder"
 import { VideoAnalysisPlayer } from "@/components/video-analysis-player"
+import { LearnedTemplateView } from "@/components/learned-template-view"
 import { createExercise, addKeyPose, type Exercise } from "@/lib/pose-store"
 import { saveExerciseVideo } from "@/lib/storage"
+import { saveTemplate } from "@/lib/template-storage"
 import type { Pose } from "@/lib/pose-utils"
 import { analyzeVideoForPose, type PoseAnalysisResult } from "@/lib/pose-analyzer"
 import { EXERCISE_CONFIGS, getExerciseConfig } from "@/lib/exercise-config"
@@ -81,13 +83,27 @@ export default function RecordPage() {
         console.log(`Analyzing for exercise: ${exerciseConfig?.name}`)
         console.log(`Angles of interest:`, anglesOfInterest)
         
-        const result = await analyzeVideoForPose(recordedBlob, anglesOfInterest)
+        // Pass exercise info for state learning
+        const exerciseInfo = {
+          name: exerciseName.trim() || exerciseConfig?.name || "exercise",
+          type: exerciseType,
+        }
+        
+        const result = await analyzeVideoForPose(
+          recordedBlob, 
+          anglesOfInterest,
+          exerciseInfo
+        )
         setAnalysisResult(result)
         
         console.log("Analysis complete!")
         console.log("Joint Angles:", result.jointAngles)
         console.log("Movements:", result.movements)
         console.log("Summary:\n", result.summary)
+        
+        if (result.learnedTemplate) {
+          console.log("🎯 Learned Template:", result.learnedTemplate)
+        }
         
         // Save the video with exercise type as name if no custom name provided
         const videoName = exerciseName.trim() || exerciseConfig?.name || "exercise"
@@ -478,6 +494,18 @@ export default function RecordPage() {
                     })()}
                   </div>
                 </Card>
+
+                {/* Learned Template Display */}
+                {analysisResult.learnedTemplate && (
+                  <LearnedTemplateView 
+                    template={analysisResult.learnedTemplate}
+                    onSaveTemplate={() => {
+                      const templateId = saveTemplate(analysisResult.learnedTemplate!, recordedBlob)
+                      console.log("Saved template with ID:", templateId)
+                      alert(`✅ Template saved! You can now use "${analysisResult.learnedTemplate!.exerciseName}" as a reference for comparisons.`)
+                    }}
+                  />
+                )}
 
                 <Button
                   onClick={() => {

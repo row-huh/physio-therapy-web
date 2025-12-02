@@ -20,6 +20,7 @@ export interface PoseAnalysisResult {
   jointAngles: JointAngle[]
   movements: MovementSequence[]
   summary: string
+  learnedTemplate?: import("./exercise-state-learner").LearnedExerciseTemplate
 }
 
 /**
@@ -199,10 +200,12 @@ function calculateSegmentAngleFromHorizontal(start: number[], end: number[]): nu
  * Analyze a video and extract joint movement information
  * @param videoBlob The video blob to analyze
  * @param anglesOfInterest Optional array of specific angles to track (e.g., ["left_knee", "right_leg_segment"])
+ * @param exerciseInfo Optional exercise information for state learning
  */
 export async function analyzeVideoForPose(
   videoBlob: Blob,
-  anglesOfInterest?: string[]
+  anglesOfInterest?: string[],
+  exerciseInfo?: { name: string; type: string }
 ): Promise<PoseAnalysisResult> {
   console.log("Starting pose analysis...")
   console.log("Video blob size:", videoBlob.size, "bytes")
@@ -317,6 +320,24 @@ export async function analyzeVideoForPose(
     // Generate summary
     const summary = generateSummary(movements)
     
+    // Learn exercise states if exercise info provided
+    let learnedTemplate: import("./exercise-state-learner").LearnedExerciseTemplate | undefined
+    
+    if (exerciseInfo && anglesOfInterest && anglesOfInterest.length > 0) {
+      console.log("🧠 Learning exercise states from video...")
+      const { learnExerciseStates } = await import("./exercise-state-learner")
+      
+      learnedTemplate = learnExerciseStates(
+        jointAngles,
+        exerciseInfo.name,
+        exerciseInfo.type,
+        anglesOfInterest
+      )
+      
+      console.log(`✅ Learned ${learnedTemplate.states.length} states`)
+      console.log(`📊 Template confidence: ${learnedTemplate.metadata.confidence}%`)
+    }
+    
     // Cleanup
     URL.revokeObjectURL(videoUrl)
     poseLandmarker.close()
@@ -325,6 +346,7 @@ export async function analyzeVideoForPose(
       jointAngles,
       movements,
       summary,
+      learnedTemplate,
     }
   } catch (error) {
     console.error("Error in analyzeVideoForPose:", error)
