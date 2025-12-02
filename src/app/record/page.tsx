@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { VideoRecorder } from "@/components/video-recorder"
 import { SimpleRecorder } from "@/components/simple-recorder"
+import { VideoAnalysisPlayer } from "@/components/video-analysis-player"
 import { createExercise, addKeyPose, type Exercise } from "@/lib/pose-store"
 import { saveExerciseVideo } from "@/lib/storage"
 import type { Pose } from "@/lib/pose-utils"
@@ -349,6 +350,13 @@ export default function RecordPage() {
                   </p>
                 </Card>
 
+                {/* Video Analysis Player */}
+                <VideoAnalysisPlayer
+                  videoBlob={recordedBlob}
+                  movements={analysisResult.movements}
+                  jointsOfInterest={getExerciseConfig(exerciseType)?.jointsOfInterest}
+                />
+
                 <Card className="p-6">
                   <h3 className="font-semibold mb-4">Movement Summary</h3>
                   <pre className="text-xs whitespace-pre-wrap bg-muted p-4 rounded overflow-x-auto">
@@ -360,11 +368,15 @@ export default function RecordPage() {
                   <h3 className="font-semibold mb-4">Detected Movements ({analysisResult.movements.length})</h3>
                   <div className="space-y-2 max-h-96 overflow-y-auto">
                     {analysisResult.movements.map((movement, idx) => (
-                      <div key={idx} className="p-3 bg-muted rounded text-sm">
-                        <div className="font-medium">{movement.joint.replace("_", " ").toUpperCase()}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {movement.startAngle.toFixed(1)}° → {movement.endAngle.toFixed(1)}° (Δ{" "}
-                          {Math.abs(movement.angleDelta).toFixed(1)}°)
+                      <div key={idx} className="p-4 bg-muted rounded text-sm border-l-4 border-primary">
+                        <div className="font-medium text-base">
+                          {movement.joint.replace("_segment", "").replace("_", " ").toUpperCase()}
+                        </div>
+                        <div className="text-lg font-bold text-primary mt-1">
+                          {movement.angleDelta > 0 ? "↗" : "↘"} {Math.abs(movement.angleDelta).toFixed(1)}° change
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-2">
+                          {movement.startAngle.toFixed(1)}° → {movement.endAngle.toFixed(1)}°
                         </div>
                         <div className="text-xs text-muted-foreground">
                           Time: {movement.startTime.toFixed(1)}s - {movement.endTime.toFixed(1)}s (

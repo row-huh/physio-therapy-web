@@ -240,143 +240,110 @@ function calculateJointAngles(
     return jointsOfInterest.includes(jointName)
   }
   
-  // Left elbow angle (shoulder-elbow-wrist)
-  if (shouldTrack("left_elbow")) {
-    try {
-      const leftElbowAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
-        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
-        getLandmark(POSE_LANDMARKS.LEFT_WRIST)
-      )
-      angles.push({ joint: "left_elbow", angle: leftElbowAngle })
-    } catch (e) {
-      console.warn("Could not calculate left elbow angle")
-    }
-  }
+  // === SEGMENT ANGLES (Line angles relative to vertical) ===
+  // These measure the angle of body segments, useful for knee extension, leg raises, etc.
   
-  // Right elbow angle
-  if (shouldTrack("right_elbow")) {
+  // Left leg segment (knee to ankle) angle from vertical
+  if (shouldTrack("left_knee") || shouldTrack("left_ankle")) {
     try {
-      const rightElbowAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
-        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
-        getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
-      )
-      angles.push({ joint: "right_elbow", angle: rightElbowAngle })
-    } catch (e) {
-      console.warn("Could not calculate right elbow angle")
-    }
-  }
-  
-  // Left knee angle (hip-knee-ankle)
-  if (shouldTrack("left_knee")) {
-    try {
-      const leftKneeAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.LEFT_HIP),
+      const leftLegSegmentAngle = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.LEFT_KNEE),
         getLandmark(POSE_LANDMARKS.LEFT_ANKLE)
       )
-      angles.push({ joint: "left_knee", angle: leftKneeAngle })
+      angles.push({ joint: "left_leg_segment", angle: leftLegSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate left knee angle")
+      console.warn("Could not calculate left leg segment angle")
     }
   }
   
-  // Right knee angle
-  if (shouldTrack("right_knee")) {
+  // Right leg segment (knee to ankle) angle from vertical
+  if (shouldTrack("right_knee") || shouldTrack("right_ankle")) {
     try {
-      const rightKneeAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.RIGHT_HIP),
+      const rightLegSegmentAngle = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
         getLandmark(POSE_LANDMARKS.RIGHT_ANKLE)
       )
-      angles.push({ joint: "right_knee", angle: rightKneeAngle })
+      angles.push({ joint: "right_leg_segment", angle: rightLegSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate right knee angle")
+      console.warn("Could not calculate right leg segment angle")
     }
   }
   
-  // Left hip angle (shoulder-hip-knee)
-  if (shouldTrack("left_hip")) {
+  // Left thigh segment (hip to knee) angle from vertical
+  if (shouldTrack("left_hip") || shouldTrack("left_knee")) {
     try {
-      const leftHipAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+      const leftThighSegmentAngle = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.LEFT_HIP),
         getLandmark(POSE_LANDMARKS.LEFT_KNEE)
       )
-      angles.push({ joint: "left_hip", angle: leftHipAngle })
+      angles.push({ joint: "left_thigh_segment", angle: leftThighSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate left hip angle")
+      console.warn("Could not calculate left thigh segment angle")
     }
   }
   
-  // Right hip angle
-  if (shouldTrack("right_hip")) {
+  // Right thigh segment (hip to knee) angle from vertical
+  if (shouldTrack("right_hip") || shouldTrack("right_knee")) {
     try {
-      const rightHipAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+      const rightThighSegmentAngle = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.RIGHT_HIP),
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
       )
-      angles.push({ joint: "right_hip", angle: rightHipAngle })
+      angles.push({ joint: "right_thigh_segment", angle: rightThighSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate right hip angle")
+      console.warn("Could not calculate right thigh segment angle")
     }
   }
   
-  // Left shoulder angle (elbow-shoulder-hip)
-  if (shouldTrack("left_shoulder")) {
+  // Left arm segment (shoulder to elbow) angle from vertical
+  if (shouldTrack("left_shoulder") || shouldTrack("left_elbow")) {
     try {
-      const leftShoulderAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+      const leftArmSegmentAngle = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
-        getLandmark(POSE_LANDMARKS.LEFT_HIP)
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW)
       )
-      angles.push({ joint: "left_shoulder", angle: leftShoulderAngle })
+      angles.push({ joint: "left_arm_segment", angle: leftArmSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate left shoulder angle")
+      console.warn("Could not calculate left arm segment angle")
     }
   }
   
-  // Right shoulder angle
-  if (shouldTrack("right_shoulder")) {
+  // Right arm segment (shoulder to elbow) angle from vertical
+  if (shouldTrack("right_shoulder") || shouldTrack("right_elbow")) {
     try {
-      const rightShoulderAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+      const rightArmSegmentAngle = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
-        getLandmark(POSE_LANDMARKS.RIGHT_HIP)
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW)
       )
-      angles.push({ joint: "right_shoulder", angle: rightShoulderAngle })
+      angles.push({ joint: "right_arm_segment", angle: rightArmSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate right shoulder angle")
+      console.warn("Could not calculate right arm segment angle")
     }
   }
   
-  // Left ankle angle (knee-ankle-foot)
-  if (shouldTrack("left_ankle")) {
+  // Left forearm segment (elbow to wrist) angle from vertical
+  if (shouldTrack("left_elbow")) {
     try {
-      const leftAnkleAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.LEFT_KNEE),
-        getLandmark(POSE_LANDMARKS.LEFT_ANKLE),
-        getLandmark(POSE_LANDMARKS.LEFT_FOOT_INDEX)
+      const leftForearmSegmentAngle = calculateSegmentAngleFromVertical(
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_WRIST)
       )
-      angles.push({ joint: "left_ankle", angle: leftAnkleAngle })
+      angles.push({ joint: "left_forearm_segment", angle: leftForearmSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate left ankle angle")
+      console.warn("Could not calculate left forearm segment angle")
     }
   }
   
-  // Right ankle angle
-  if (shouldTrack("right_ankle")) {
+  // Right forearm segment (elbow to wrist) angle from vertical
+  if (shouldTrack("right_elbow")) {
     try {
-      const rightAnkleAngle = calculateAngle(
-        getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
-        getLandmark(POSE_LANDMARKS.RIGHT_ANKLE),
-        getLandmark(POSE_LANDMARKS.RIGHT_FOOT_INDEX)
+      const rightForearmSegmentAngle = calculateSegmentAngleFromVertical(
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
       )
-      angles.push({ joint: "right_ankle", angle: rightAnkleAngle })
+      angles.push({ joint: "right_forearm_segment", angle: rightForearmSegmentAngle })
     } catch (e) {
-      console.warn("Could not calculate right ankle angle")
+      console.warn("Could not calculate right forearm segment angle")
     }
   }
   
@@ -388,8 +355,8 @@ function calculateJointAngles(
  */
 function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
   const movements: MovementSequence[] = []
-  const ANGLE_THRESHOLD = 15 // Minimum angle change to consider as movement
-  const TIME_THRESHOLD = 0.5 // Minimum time (seconds) to hold position
+  const ANGLE_THRESHOLD = 20 // Increased: Minimum angle change to consider as movement (more strict)
+  const TIME_THRESHOLD = 0.3 // Minimum time (seconds) to hold position
   
   // Group by joint
   const jointGroups = new Map<string, JointAngle[]>()
@@ -404,6 +371,9 @@ function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
   jointGroups.forEach((angles, joint) => {
     if (angles.length < 2) return
     
+    // Sort by timestamp to ensure chronological order
+    angles.sort((a, b) => a.timestamp - b.timestamp)
+    
     let currentSegment: JointAngle | null = angles[0]
     
     for (let i = 1; i < angles.length; i++) {
@@ -411,25 +381,39 @@ function detectMovements(jointAngles: JointAngle[]): MovementSequence[] {
       const angleDelta = Math.abs(angle.angle - currentSegment!.angle)
       const timeDelta = angle.timestamp - currentSegment!.timestamp
       
-      // Detect significant movement or hold
-      if (angleDelta > ANGLE_THRESHOLD || i === angles.length - 1) {
-        if (timeDelta >= TIME_THRESHOLD || i === angles.length - 1) {
+      // Detect significant movement
+      if (angleDelta > ANGLE_THRESHOLD && timeDelta >= TIME_THRESHOLD) {
+        movements.push({
+          joint,
+          startAngle: currentSegment!.angle,
+          endAngle: angle.angle,
+          startTime: currentSegment!.timestamp,
+          endTime: angle.timestamp,
+          duration: angle.timestamp - currentSegment!.timestamp,
+          angleDelta: angle.angle - currentSegment!.angle,
+        })
+        currentSegment = angle
+      } else if (i === angles.length - 1 && timeDelta >= TIME_THRESHOLD) {
+        // Last segment - check if there was any significant change
+        if (angleDelta > ANGLE_THRESHOLD) {
           movements.push({
             joint,
             startAngle: currentSegment!.angle,
-            endAngle: angles[i - 1].angle,
+            endAngle: angle.angle,
             startTime: currentSegment!.timestamp,
-            endTime: angles[i - 1].timestamp,
-            duration: angles[i - 1].timestamp - currentSegment!.timestamp,
-            angleDelta: angles[i - 1].angle - currentSegment!.angle,
+            endTime: angle.timestamp,
+            duration: angle.timestamp - currentSegment!.timestamp,
+            angleDelta: angle.angle - currentSegment!.angle,
           })
         }
-        currentSegment = angle
       }
     }
   })
   
-  return movements.sort((a, b) => a.startTime - b.startTime)
+  // Filter out movements that are too small in total change
+  const significantMovements = movements.filter((m) => Math.abs(m.angleDelta) > ANGLE_THRESHOLD)
+  
+  return significantMovements.sort((a, b) => a.startTime - b.startTime)
 }
 
 /**
@@ -443,13 +427,25 @@ function generateSummary(movements: MovementSequence[]): string {
   const summaryLines: string[] = []
   
   movements.forEach((movement, index) => {
-    const direction = movement.angleDelta > 0 ? "extended" : "flexed"
-    const angleMagnitude = Math.abs(movement.angleDelta).toFixed(1)
+    const segmentName = movement.joint
+      .replace("_segment", "")
+      .replace("_", " ")
+      .toUpperCase()
+    
+    const totalChange = Math.abs(movement.angleDelta).toFixed(1)
+    
+    // Determine movement direction
+    let direction = ""
+    if (movement.angleDelta > 0) {
+      direction = "raised/moved away"
+    } else {
+      direction = "lowered/moved toward vertical"
+    }
     
     summaryLines.push(
-      `${index + 1}. ${movement.joint.replace("_", " ").toUpperCase()}: ` +
-      `${direction} by ${angleMagnitude}° (${movement.startAngle.toFixed(1)}° → ${movement.endAngle.toFixed(1)}°) ` +
-      `at ${movement.startTime.toFixed(1)}s, held for ${movement.duration.toFixed(1)}s`
+      `${index + 1}. ${segmentName}: ${direction} by ${totalChange}° ` +
+      `(from ${movement.startAngle.toFixed(1)}° to ${movement.endAngle.toFixed(1)}°) ` +
+      `at ${movement.startTime.toFixed(1)}s for ${movement.duration.toFixed(1)}s`
     )
   })
   
