@@ -21,8 +21,8 @@ export default function Home() {
     setExerciseName("")
   }
 
-  const handleDeleteExercise = (id: string) => {
-    deleteExercise(id)
+  const handleDeleteExercise = async (id: string) => {
+    await deleteExercise(id)
     setExercises(getAllExercises())
   }
 
@@ -52,7 +52,7 @@ export default function Home() {
                     <div>
                       <h3 className="font-semibold">{exercise.name}</h3>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(exercise.createdAt).toLocaleDateString()}
+                        {new Date(exercise.timestamp).toLocaleDateString()}
                       </p>
                     </div>
                     <div className="flex gap-2">

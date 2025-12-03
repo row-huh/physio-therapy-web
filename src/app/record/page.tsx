@@ -107,7 +107,7 @@ export default function RecordPage() {
         
         // Save the video with exercise type as name if no custom name provided
         const videoName = exerciseName.trim() || exerciseConfig?.name || "exercise"
-        await saveExerciseVideo(videoName, recordedBlob, exerciseType)
+        await saveExerciseVideo(videoName, recordedBlob, exerciseType, result.learnedTemplate)
         
         console.log("✅ Video saved successfully!")
         

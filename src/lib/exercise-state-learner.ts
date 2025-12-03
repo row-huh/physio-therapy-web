@@ -73,6 +73,17 @@ function kMeansClustering(
   k: number,
   maxIterations: number = 100
 ): { clusters: number[][]; centroids: number[][] } {
+  // Handle empty or insufficient data
+  if (dataPoints.length === 0) {
+    console.warn("⚠️ No data points for clustering")
+    return { clusters: [], centroids: [] }
+  }
+  
+  if (dataPoints.length < k) {
+    console.warn(`⚠️ Not enough data points (${dataPoints.length}) for ${k} clusters, using ${dataPoints.length} clusters`)
+    k = dataPoints.length
+  }
+  
   const dimensions = dataPoints[0].length
   
   // Initialize centroids randomly from data points
@@ -184,6 +195,84 @@ function isHoldState(
 }
 
 /**
+ * Count repetitions by detecting complete exercise cycles
+ * A rep is a complete cycle through the primary states
+ */
+function countRepetitions(
+  states: DetectedState[],
+  stateSequence: string[],
+  angleNames: string[]
+): number {
+  if (states.length === 0 || stateSequence.length === 0) return 0
+  
+  // Identify the starting/ending state (typically the most flexed or extended position)
+  // This is usually the state with the smallest or largest mean angle
+  const primaryAngle = angleNames[0] // Use first angle as primary
+  
+  // Find states sorted by angle
+  const statesByAngle = [...states]
+    .filter(s => s.angleRanges[primaryAngle])
+    .sort((a, b) => 
+      a.angleRanges[primaryAngle].mean - b.angleRanges[primaryAngle].mean
+    )
+  
+  if (statesByAngle.length === 0) {
+    console.warn("⚠️ No states with angle data found")
+    return 1
+  }
+  
+  // The start state is typically the most flexed (smallest angle) position
+  const startState = statesByAngle[0]
+  // The peak state is the most extended (largest angle) position  
+  const peakState = statesByAngle[statesByAngle.length - 1]
+  
+  console.log(`🎯 Start state: ${startState.name} (${Math.round(startState.angleRanges[primaryAngle].mean)}°)`)
+  console.log(`🎯 Peak state: ${peakState.name} (${Math.round(peakState.angleRanges[primaryAngle].mean)}°)`)
+  
+  // Count complete cycles: start → peak → start (or back to start)
+  // A rep is counted when we return to the start state after visiting the peak
+  let repCount = 0
+  let hasVisitedPeak = false
+  let lastState: string | null = null
+  
+  for (let i = 0; i < stateSequence.length; i++) {
+    const currentState = stateSequence[i]
+    
+    // Skip if same as last (no transition)
+    if (currentState === lastState) continue
+    
+    // Check if we reached the peak state
+    if (currentState === peakState.id) {
+      hasVisitedPeak = true
+      console.log(`  Peak reached at position ${i}`)
+    }
+    
+    // Check if we returned to start state after visiting peak
+    if (currentState === startState.id && hasVisitedPeak) {
+      repCount++
+      hasVisitedPeak = false
+      console.log(`  ✅ Rep ${repCount} completed at position ${i}`)
+    }
+    
+    lastState = currentState
+  }
+  
+  // If we ended at peak or in transition, count it as a partial rep (round up)
+  if (hasVisitedPeak && repCount > 0) {
+    console.log(`  ⚡ Partial rep detected (ended at peak)`)
+    repCount++
+  }
+  
+  // Fallback: if cycle counting failed, use occurrence counting for the start state
+  if (repCount === 0) {
+    console.warn("⚠️ Cycle counting failed, using fallback method")
+    repCount = Math.max(1, startState.occurrences.length)
+  }
+  
+  return repCount
+}
+
+/**
  * Main function: Learn exercise states from analyzed video data
  */
 export function learnExerciseStates(
@@ -219,6 +308,16 @@ export function learnExerciseStates(
   const dataVectors: number[][] = frames.map(frame => 
     angleNames.map(name => frame[name] || 0)
   )
+  
+  // Check if we have enough data
+  if (dataVectors.length === 0) {
+    console.error("❌ No data vectors created - no angle data found")
+    throw new Error("No angle data found for the specified angles of interest")
+  }
+  
+  if (frames.length < 10) {
+    console.warn("⚠️ Very few frames detected, results may be unreliable")
+  }
   
   // Determine optimal number of clusters (states)
   // Start with 2-4 states (common for most exercises)
@@ -366,9 +465,11 @@ export function learnExerciseStates(
   ).join(" → "))
   
   const totalDuration = timestamps[timestamps.length - 1] - timestamps[0]
-  const estimatedReps = Math.max(1, Math.floor(detectedStates.reduce((sum, s) => 
-    sum + s.occurrences.length, 0) / detectedStates.length
-  ))
+  
+  // NEW REP COUNTING ALGORITHM: Count complete cycles
+  const estimatedReps = countRepetitions(detectedStates, stateSequence, angleNames)
+  
+  console.log(`💪 Counted ${estimatedReps} repetitions`)
   
   return {
     exerciseName,
