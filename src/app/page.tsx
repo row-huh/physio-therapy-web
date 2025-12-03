@@ -32,8 +32,8 @@ export default function Home() {
         {step === "list" && (
           <div className="space-y-6">
             <div className="text-center space-y-2 mb-8">
-              <h1 className="text-4xl font-bold">Exercise Tracker</h1>
-              <p className="text-muted-foreground">Record exercise videos and compare your form</p>
+              <h1 className="text-4xl font-bold">Physiotherapy Guidance System</h1>
+              <p className="text-muted-foreground">Proof of Concept</p>
             </div>
 
             <Button onClick={handleCreateNew} size="lg" className="w-full">

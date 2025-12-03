@@ -32,11 +32,15 @@ export default function ComparePage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [videoError, setVideoError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
     const ex = getExercise(params.id as string)
     if (ex) {
+      console.log("📹 Loaded exercise:", ex)
+      console.log("🔗 Video URL:", ex.videoUrl)
       setExercise(ex)
     }
   }, [params.id])
@@ -280,11 +284,37 @@ export default function ComparePage() {
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">Reference Video</h2>
             <Card className="p-4 bg-muted aspect-video flex items-center justify-center rounded-lg overflow-hidden">
+              {videoError && (
+                <div className="text-sm text-destructive p-4 text-center">
+                  <p className="font-semibold mb-2">Video Load Error:</p>
+                  <p>{videoError}</p>
+                  <p className="text-xs mt-2 opacity-70">URL: {exercise.videoUrl}</p>
+                </div>
+              )}
               <video 
-                src={exercise.videoUrl} 
+                ref={videoRef}
                 controls 
                 className="w-full h-full object-contain rounded"
-              />
+                crossOrigin="anonymous"
+                onError={(e) => {
+                  console.error("❌ Video load error:", e)
+                  console.error("Video URL:", exercise.videoUrl)
+                  console.error("Error event:", e.currentTarget.error)
+                  setVideoError(
+                    e.currentTarget.error 
+                      ? `Error ${e.currentTarget.error.code}: ${e.currentTarget.error.message}` 
+                      : "Failed to load video"
+                  )
+                }}
+                onLoadedData={() => {
+                  console.log("✅ Video loaded successfully")
+                  setVideoError(null)
+                }}
+              >
+                <source src={exercise.videoUrl} type="video/webm" />
+                <source src={exercise.videoUrl} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
             </Card>
           </div>
 
@@ -294,10 +324,13 @@ export default function ComparePage() {
             <Card className="p-4 bg-muted aspect-video flex items-center justify-center rounded-lg overflow-hidden">
               {uploadedVideoUrl ? (
                 <video 
-                  src={uploadedVideoUrl} 
                   controls 
                   className="w-full h-full object-contain rounded"
-                />
+                >
+                  <source src={uploadedVideoUrl} type="video/webm" />
+                  <source src={uploadedVideoUrl} type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
               ) : (
                 <div className="text-center text-muted-foreground">
                   <Upload className="w-12 h-12 mx-auto mb-2 opacity-50" />
