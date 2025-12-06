@@ -1,18 +1,35 @@
 "use client"
 
+
+
 import { useState, useEffect, useRef } from "react"
+
 import { Button } from "@/components/ui/button"
+
 import { Card } from "@/components/ui/card"
+
 import { Input } from "@/components/ui/input"
+
 import { getExercise } from "@/lib/storage"
+
 import { analyzeVideoForPose } from "@/lib/pose-analyzer"
+
 import { getExerciseConfig } from "@/lib/exercise-config"
+
 import type { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
+
 import Link from "next/link"
+
 import { useParams } from "next/navigation"
-import { Upload, Loader2, CheckCircle2, XCircle } from "lucide-react"
+
+import { Upload, Loader2, CheckCircle2, XCircle, Video } from "lucide-react"
+
+import { ComparisonRecorder } from "@/components/comparison-recorder"
+
+
 
 interface ComparisonResult {
+
   similarity: number
   referenceReps: number
   uploadedReps: number
@@ -22,7 +39,10 @@ interface ComparisonResult {
     stateMatches: { [key: string]: number }
     angleDeviations: { [key: string]: number }
   }
+
 }
+
+
 
 export default function ComparePage() {
   const params = useParams()
@@ -33,8 +53,10 @@ export default function ComparePage() {
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [videoError, setVideoError] = useState<string | null>(null)
+  const [inputMethod, setInputMethod] = useState<'upload' | 'webcam' | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+
 
   useEffect(() => {
     const ex = getExercise(params.id as string)
@@ -44,6 +66,7 @@ export default function ComparePage() {
       setExercise(ex)
     }
   }, [params.id])
+
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -57,18 +80,29 @@ export default function ComparePage() {
     }
   }
 
+
+  const handleVideoRecorded = (videoBlob: Blob) => {
+    console.log("[ComparePage] Video recorded, blob size:", videoBlob.size)
+    const file = new File([videoBlob], 'recorded-video.webm', { type: 'video/webm' })
+    setUploadedFile(file)
+    setUploadedVideoUrl(URL.createObjectURL(videoBlob))
+    setComparisonResult(null)
+    setError(null)
+  }
+
+
   const compareVideos = async () => {
     if (!uploadedFile || !exercise) return
+
 
     setIsAnalyzing(true)
     setError(null)
 
+
     try {
       console.log("🔍 Starting video comparison...")
-      
       // Check if reference video already has a learned template
       let referenceTemplate: LearnedExerciseTemplate
-      
       if (exercise.learnedTemplate) {
         console.log("✅ Using stored reference template")
         referenceTemplate = exercise.learnedTemplate
@@ -80,50 +114,45 @@ export default function ComparePage() {
           undefined,
           { name: exercise.name, type: exercise.type }
         )
-        
         if (!referenceAnalysis.learnedTemplate) {
           throw new Error("Failed to learn reference exercise template")
         }
         referenceTemplate = referenceAnalysis.learnedTemplate
       }
 
-      // Analyze uploaded video
-      console.log("📹 Analyzing uploaded video...")
-      
-      // Get the exercise config to get angles of interest
+
+      console.log(" Analyzing uploaded video...")
       const exerciseConfig = getExerciseConfig(exercise.type)
       const anglesOfInterest = exerciseConfig?.anglesOfInterest
-      
       console.log(`Exercise type: ${exercise.type}`)
       console.log(`Exercise config:`, exerciseConfig)
       console.log(`Using angles of interest:`, anglesOfInterest)
-      
       if (!anglesOfInterest || anglesOfInterest.length === 0) {
         console.warn("⚠️ No angles of interest found, template learning may not work")
       }
-      
       const uploadedAnalysis = await analyzeVideoForPose(
         uploadedFile,
         anglesOfInterest,
         { name: exercise.name, type: exercise.type }
       )
-      
       console.log("Uploaded analysis result:", uploadedAnalysis)
       console.log("Has learned template?", !!uploadedAnalysis.learnedTemplate)
+
 
       if (!uploadedAnalysis.learnedTemplate) {
         throw new Error(`Failed to learn uploaded exercise template. Video may be too short or no valid poses detected. Joint angles found: ${uploadedAnalysis.jointAngles.length}`)
       }
 
-      // Compare the two templates
-      console.log("📊 Comparing templates...")
+
+      console.log("Comparing templates...")
       const comparison = compareTemplates(
         referenceTemplate,
         uploadedAnalysis.learnedTemplate
       )
 
+
       setComparisonResult(comparison)
-      console.log("✅ Comparison complete:", comparison)
+      console.log("Comparison complete:", comparison)
     } catch (err) {
       console.error("❌ Error comparing videos:", err)
       setError(err instanceof Error ? err.message : "Failed to compare videos")
@@ -131,6 +160,7 @@ export default function ComparePage() {
       setIsAnalyzing(false)
     }
   }
+
 
   const compareTemplates = (
     reference: LearnedExerciseTemplate,
@@ -140,6 +170,7 @@ export default function ComparePage() {
     const stateMatches: { [key: string]: number } = {}
     const angleDeviations: { [key: string]: number } = {}
 
+
     // For each state in reference, find closest match in uploaded
     reference.states.forEach((refState) => {
       const closestMatch = uploaded.states.reduce((best, upState) => {
@@ -147,23 +178,26 @@ export default function ComparePage() {
         return similarity > best.similarity ? { state: upState, similarity } : best
       }, { state: uploaded.states[0], similarity: 0 })
 
+
       stateMatches[refState.name] = closestMatch.similarity
     })
 
+
     // Calculate angle deviations for each angle across all states
     const allAngles = new Set<string>()
-    reference.states.forEach(s => 
+    reference.states.forEach(s =>
       Object.keys(s.angleRanges).forEach(angle => allAngles.add(angle))
     )
+
 
     allAngles.forEach(angleName => {
       const refAngles = reference.states
         .map(s => s.angleRanges[angleName]?.mean)
         .filter(a => a !== undefined) as number[]
-      
       const upAngles = uploaded.states
         .map(s => s.angleRanges[angleName]?.mean)
         .filter(a => a !== undefined) as number[]
+
 
       if (refAngles.length > 0 && upAngles.length > 0) {
         const refAvg = refAngles.reduce((a, b) => a + b, 0) / refAngles.length
@@ -172,13 +206,14 @@ export default function ComparePage() {
       }
     })
 
+
     // Calculate overall similarity (0-100)
     const stateSimilarity = Object.values(stateMatches).reduce((a, b) => a + b, 0) / Object.values(stateMatches).length
-    const angleAccuracy = 100 - Math.min(100, 
+    const angleAccuracy = 100 - Math.min(100,
       Object.values(angleDeviations).reduce((a, b) => a + b, 0) / Object.values(angleDeviations).length
     )
-    
     const overallSimilarity = (stateSimilarity * 0.6 + angleAccuracy * 0.4)
+
 
     return {
       similarity: Math.round(overallSimilarity),
@@ -193,12 +228,15 @@ export default function ComparePage() {
     }
   }
 
+
   const calculateStateSimilarity = (state1: any, state2: any): number => {
     const angles1 = Object.keys(state1.angleRanges)
     const angles2 = Object.keys(state2.angleRanges)
     const commonAngles = angles1.filter(a => angles2.includes(a))
 
+
     if (commonAngles.length === 0) return 0
+
 
     const similarities = commonAngles.map(angle => {
       const mean1 = state1.angleRanges[angle].mean
@@ -208,8 +246,10 @@ export default function ComparePage() {
       return Math.max(0, 100 - (diff / 180) * 100)
     })
 
+
     return similarities.reduce((a, b) => a + b, 0) / similarities.length
   }
+
 
   if (!exercise) {
     return (
@@ -226,6 +266,7 @@ export default function ComparePage() {
     )
   }
 
+
   return (
     <main className="min-h-screen bg-background p-8">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -235,48 +276,150 @@ export default function ComparePage() {
           </Link>
         </div>
 
+
         <div>
           <h1 className="text-3xl font-bold mb-2">Compare Videos - {exercise.name}</h1>
-          <p className="text-muted-foreground">Upload a video to compare against the reference exercise</p>
+          <p className="text-muted-foreground">Upload a video or record using your webcam to compare against the reference exercise</p>
         </div>
 
+
+        {/* Input Method Selection */}
+        {!inputMethod && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card
+              className="p-6 cursor-pointer hover:border-primary transition-colors"
+              onClick={() => setInputMethod('upload')}
+            >
+              <div className="text-center space-y-3">
+                <Upload className="w-12 h-12 mx-auto text-primary" />
+                <h3 className="text-lg font-semibold">Upload Video</h3>
+                <p className="text-sm text-muted-foreground">
+                  Upload a pre-recorded video file from your device
+                </p>
+              </div>
+            </Card>
+            <Card
+              className="p-6 cursor-pointer hover:border-primary transition-colors"
+              onClick={() => setInputMethod('webcam')}
+            >
+              <div className="text-center space-y-3">
+                <Video className="w-12 h-12 mx-auto text-primary" />
+                <h3 className="text-lg font-semibold">Record with Webcam</h3>
+                <p className="text-sm text-muted-foreground">
+                  Record a new video using your webcam with real-time pose detection
+                </p>
+              </div>
+            </Card>
+          </div>
+        )}
+
+
         {/* Video Upload Section */}
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold mb-4">Upload Video for Comparison</h2>
-          <div className="flex items-center gap-4">
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              onChange={handleFileUpload}
-              className="flex-1"
-            />
-            {uploadedFile && (
-              <Button 
-                onClick={compareVideos}
-                disabled={isAnalyzing}
-                className="gap-2"
+        {inputMethod === 'upload' && (
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Upload Video for Comparison</h2>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setInputMethod(null)
+                  setUploadedFile(null)
+                  setUploadedVideoUrl(null)
+                  setComparisonResult(null)
+                }}
               >
-                {isAnalyzing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-4 h-4" />
-                    Compare Videos
-                  </>
-                )}
+                Change Method
               </Button>
+            </div>
+            <div className="flex items-center gap-4">
+              <Input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                onChange={handleFileUpload}
+                className="flex-1"
+              />
+              {uploadedFile && (
+                <Button
+                  onClick={compareVideos}
+                  disabled={isAnalyzing}
+                  className="gap-2"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Compare Videos
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+            {error && (
+              <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-md">
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
+            )}
+          </Card>
+        )}
+
+
+        {/* Webcam Recording Section */}
+        {inputMethod === 'webcam' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Record Using Webcam</h2>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setInputMethod(null)
+                  setUploadedFile(null)
+                  setUploadedVideoUrl(null)
+                  setComparisonResult(null)
+                }}
+              >
+                Change Method
+              </Button>
+            </div>
+            <ComparisonRecorder onVideoRecorded={handleVideoRecorded} />
+            {uploadedFile && (
+              <Card className="p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">Video recorded successfully!</p>
+                  <Button
+                    onClick={compareVideos}
+                    disabled={isAnalyzing}
+                    className="gap-2"
+                  >
+                    {isAnalyzing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4" />
+                        Compare Videos
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </Card>
+            )}
+            {error && (
+              <div className="p-3 bg-destructive/10 border border-destructive rounded-md">
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
             )}
           </div>
-          {error && (
-            <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-md">
-              <p className="text-sm text-destructive">{error}</p>
-            </div>
-          )}
-        </Card>
+        )}
+
 
         {/* Video Display Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -291,9 +434,9 @@ export default function ComparePage() {
                   <p className="text-xs mt-2 opacity-70">URL: {exercise.videoUrl}</p>
                 </div>
               )}
-              <video 
+              <video
                 ref={videoRef}
-                controls 
+                controls
                 className="w-full h-full object-contain rounded"
                 crossOrigin="anonymous"
                 onError={(e) => {
@@ -301,8 +444,8 @@ export default function ComparePage() {
                   console.error("Video URL:", exercise.videoUrl)
                   console.error("Error event:", e.currentTarget.error)
                   setVideoError(
-                    e.currentTarget.error 
-                      ? `Error ${e.currentTarget.error.code}: ${e.currentTarget.error.message}` 
+                    e.currentTarget.error
+                      ? `Error ${e.currentTarget.error.code}: ${e.currentTarget.error.message}`
                       : "Failed to load video"
                   )
                 }}
@@ -318,13 +461,14 @@ export default function ComparePage() {
             </Card>
           </div>
 
+
           {/* Uploaded Video */}
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">Your Video</h2>
             <Card className="p-4 bg-muted aspect-video flex items-center justify-center rounded-lg overflow-hidden">
               {uploadedVideoUrl ? (
-                <video 
-                  controls 
+                <video
+                  controls
                   className="w-full h-full object-contain rounded"
                 >
                   <source src={uploadedVideoUrl} type="video/webm" />
@@ -341,34 +485,33 @@ export default function ComparePage() {
           </div>
         </div>
 
+
         {/* Comparison Results */}
         {comparisonResult && (
           <Card className="p-6">
             <h2 className="text-2xl font-bold mb-6">Comparison Results</h2>
-            
             {/* Overall Similarity */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-lg font-semibold">Overall Similarity</span>
-                <span className={`text-3xl font-bold ${
-                  comparisonResult.similarity >= 80 ? 'text-green-500' :
+                <span className={`text-3xl font-bold ${comparisonResult.similarity >= 80 ? 'text-green-500' :
                   comparisonResult.similarity >= 60 ? 'text-yellow-500' :
-                  'text-red-500'
-                }`}>
+                    'text-red-500'
+                  }`}>
                   {comparisonResult.similarity}%
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-4 overflow-hidden">
-                <div 
-                  className={`h-full transition-all ${
-                    comparisonResult.similarity >= 80 ? 'bg-green-500' :
+                <div
+                  className={`h-full transition-all ${comparisonResult.similarity >= 80 ? 'bg-green-500' :
                     comparisonResult.similarity >= 60 ? 'bg-yellow-500' :
-                    'bg-red-500'
-                  }`}
+                      'bg-red-500'
+                    }`}
                   style={{ width: `${comparisonResult.similarity}%` }}
                 />
               </div>
             </div>
+
 
             {/* Rep Counts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -382,6 +525,7 @@ export default function ComparePage() {
               </Card>
             </div>
 
+
             {/* State Matches */}
             <div className="mb-6">
               <h3 className="text-lg font-semibold mb-3">State Accuracy</h3>
@@ -394,12 +538,11 @@ export default function ComparePage() {
                         <span className="text-sm text-muted-foreground">{Math.round(similarity)}%</span>
                       </div>
                       <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                        <div 
-                          className={`h-full ${
-                            similarity >= 80 ? 'bg-green-500' :
+                        <div
+                          className={`h-full ${similarity >= 80 ? 'bg-green-500' :
                             similarity >= 60 ? 'bg-yellow-500' :
-                            'bg-red-500'
-                          }`}
+                              'bg-red-500'
+                            }`}
                           style={{ width: `${similarity}%` }}
                         />
                       </div>
@@ -414,16 +557,16 @@ export default function ComparePage() {
               </div>
             </div>
 
+
             {/* Angle Deviations */}
             <div>
               <h3 className="text-lg font-semibold mb-3">Angle Deviations</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {Object.entries(comparisonResult.details.angleDeviations).map(([angle, deviation]) => (
-                  <Card key={angle} className={`p-3 ${
-                    deviation < 10 ? 'bg-green-50 dark:bg-green-950/20' :
+                  <Card key={angle} className={`p-3 ${deviation < 10 ? 'bg-green-50 dark:bg-green-950/20' :
                     deviation < 20 ? 'bg-yellow-50 dark:bg-yellow-950/20' :
-                    'bg-red-50 dark:bg-red-950/20'
-                  }`}>
+                      'bg-red-50 dark:bg-red-950/20'
+                    }`}>
                     <div className="text-xs text-muted-foreground mb-1">{angle}</div>
                     <div className="text-xl font-bold">±{Math.round(deviation)}°</div>
                   </Card>
@@ -435,4 +578,6 @@ export default function ComparePage() {
       </div>
     </main>
   )
+
 }
+
