@@ -1,8 +1,4 @@
-/**
- * Template Storage
- * 
- * Manages saving and retrieving learned exercise templates
- */
+
 
 import type { LearnedExerciseTemplate } from "./exercise-state-learner"
 

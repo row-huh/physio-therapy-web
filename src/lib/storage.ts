@@ -4,11 +4,11 @@ import type { LearnedExerciseTemplate } from "./exercise-state-learner"
 export interface ExerciseVideo {
   id: string
   name: string
-  type: string // exercise type (knee-extension, bicep-curl, etc.)
-  videoUrl: string // Supabase storage URL or fallback to base64
-  timestamp: number // createdAt timestamp
-  storedInSupabase?: boolean // Flag to indicate if video is in Supabase
-  learnedTemplate?: LearnedExerciseTemplate // Learned exercise template from analysis
+  type: string 
+  videoUrl: string 
+  timestamp: number 
+  storedInSupabase?: boolean 
+  learnedTemplate?: LearnedExerciseTemplate 
 }
 
 const STORAGE_KEY = "exercise-videos"
@@ -48,13 +48,11 @@ export async function saveExerciseVideo(
   try {
     const supabase = createClient()
     
-    // Create a unique filename
     const fileName = `${id}_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.webm`
     const filePath = `${exerciseType}/${fileName}`
     
     console.log(`☁️ Uploading video to Supabase: ${filePath}`)
     
-    // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(SUPABASE_BUCKET)
       .upload(filePath, videoBlob, {
@@ -70,7 +68,6 @@ export async function saveExerciseVideo(
     
     console.log(`✅ Video uploaded to Supabase:`, uploadData)
     
-    // Get public URL
     const { data: urlData } = supabase.storage
       .from(SUPABASE_BUCKET)
       .getPublicUrl(filePath)
@@ -81,7 +78,7 @@ export async function saveExerciseVideo(
     
     console.log(`🔗 Public URL:`, urlData.publicUrl)
     
-    // Save metadata to localStorage
+
     const video: ExerciseVideo = {
       id,
       name,
@@ -129,7 +126,6 @@ export async function deleteExercise(id: string): Promise<boolean> {
     return false
   }
   
-  // If stored in Supabase, delete from there too
   if (videoToDelete.storedInSupabase) {
     try {
       const supabase = createClient()

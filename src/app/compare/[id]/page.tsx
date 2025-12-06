@@ -3,27 +3,16 @@
 
 
 import { useState, useEffect, useRef } from "react"
-
 import { Button } from "@/components/ui/button"
-
 import { Card } from "@/components/ui/card"
-
 import { Input } from "@/components/ui/input"
-
 import { getExercise } from "@/lib/storage"
-
 import { analyzeVideoForPose } from "@/lib/pose-analyzer"
-
 import { getExerciseConfig } from "@/lib/exercise-config"
-
 import type { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
-
 import Link from "next/link"
-
 import { useParams } from "next/navigation"
-
 import { Upload, Loader2, CheckCircle2, XCircle, Video } from "lucide-react"
-
 import { ComparisonRecorder } from "@/components/comparison-recorder"
 
 

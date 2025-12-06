@@ -3,23 +3,16 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { getAllExercises, deleteExercise, type ExerciseVideo } from "@/lib/storage"
 
 export default function Home() {
   const [exercises, setExercises] = useState<ExerciseVideo[]>([])
   const [step, setStep] = useState<"list" | "create">("list")
-  const [exerciseName, setExerciseName] = useState("")
 
   useEffect(() => {
     setExercises(getAllExercises())
   }, [])
-
-  const handleCreateNew = () => {
-    setStep("create")
-    setExerciseName("")
-  }
 
   const handleDeleteExercise = async (id: string) => {
     await deleteExercise(id)
@@ -36,8 +29,10 @@ export default function Home() {
               <p className="text-muted-foreground">Proof of Concept</p>
             </div>
 
-            <Button onClick={handleCreateNew} size="lg" className="w-full">
+            <Button size="lg" className="w-full">
+              <Link href={"/record"}>
               Record New Exercise
+              </Link>    
             </Button>
 
             {exercises.length === 0 ? (
@@ -70,46 +65,6 @@ export default function Home() {
               </div>
             )}
           </div>
-        )}
-
-        {step === "create" && (
-          <Link href="/record">
-            <div className="space-y-6">
-              <div>
-                <h1 className="text-3xl font-bold mb-2">Record Exercise</h1>
-                <p className="text-muted-foreground">Give your exercise a name and record the video</p>
-              </div>
-
-              <Card className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Exercise Name</label>
-                  <Input
-                    placeholder="e.g., Squat, Push-up, Deadlift"
-                    value={exerciseName}
-                    onChange={(e) => setExerciseName(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-
-                <Button
-                  onClick={() => {
-                    if (exerciseName.trim()) {
-                      // Name is ready, navigate to record page
-                      setStep("list")
-                    }
-                  }}
-                  disabled={!exerciseName.trim()}
-                  className="w-full"
-                >
-                  Continue
-                </Button>
-
-                <Button variant="outline" onClick={() => setStep("list")} className="w-full">
-                  Cancel
-                </Button>
-              </Card>
-            </div>
-          </Link>
         )}
       </div>
     </main>
