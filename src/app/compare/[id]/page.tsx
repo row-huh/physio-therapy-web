@@ -87,10 +87,8 @@ export default function ComparePage() {
         referenceTemplate = referenceAnalysis.learnedTemplate
       }
 
-      // Analyze uploaded video
-      console.log("📹 Analyzing uploaded video...")
+      console.log(" Analyzing uploaded video...")
       
-      // Get the exercise config to get angles of interest
       const exerciseConfig = getExerciseConfig(exercise.type)
       const anglesOfInterest = exerciseConfig?.anglesOfInterest
       
@@ -115,15 +113,14 @@ export default function ComparePage() {
         throw new Error(`Failed to learn uploaded exercise template. Video may be too short or no valid poses detected. Joint angles found: ${uploadedAnalysis.jointAngles.length}`)
       }
 
-      // Compare the two templates
-      console.log("📊 Comparing templates...")
+      console.log("Comparing templates...")
       const comparison = compareTemplates(
         referenceTemplate,
         uploadedAnalysis.learnedTemplate
       )
 
       setComparisonResult(comparison)
-      console.log("✅ Comparison complete:", comparison)
+      console.log("Comparison complete:", comparison)
     } catch (err) {
       console.error("❌ Error comparing videos:", err)
       setError(err instanceof Error ? err.message : "Failed to compare videos")

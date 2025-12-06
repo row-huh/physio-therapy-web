@@ -16,7 +16,7 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
       <Card className="p-6">
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-2xl font-bold mb-2">📊 Learned Exercise Template</h2>
+            <h2 className="text-2xl font-bold mb-2">Learned Exercise Template</h2>
             <p className="text-muted-foreground">
               Automatically detected <strong>{template.states.length} key states</strong> from your reference video
             </p>
