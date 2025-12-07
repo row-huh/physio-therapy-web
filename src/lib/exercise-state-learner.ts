@@ -75,12 +75,12 @@ function kMeansClustering(
 ): { clusters: number[][]; centroids: number[][] } {
   // Handle empty or insufficient data
   if (dataPoints.length === 0) {
-    console.warn("⚠️ No data points for clustering")
+    console.warn("No data points for clustering")
     return { clusters: [], centroids: [] }
   }
   
   if (dataPoints.length < k) {
-    console.warn(`⚠️ Not enough data points (${dataPoints.length}) for ${k} clusters, using ${dataPoints.length} clusters`)
+    console.warn(`Not enough data points (${dataPoints.length}) for ${k} clusters, using ${dataPoints.length} clusters`)
     k = dataPoints.length
   }
   
