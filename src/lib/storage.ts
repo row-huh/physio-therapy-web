@@ -51,7 +51,7 @@ export async function saveExerciseVideo(
     const fileName = `${id}_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.webm`
     const filePath = `${exerciseType}/${fileName}`
     
-    console.log(`☁️ Uploading video to Supabase: ${filePath}`)
+    console.log(`Uploading video to Supabase: ${filePath}`)
     
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(SUPABASE_BUCKET)
@@ -66,7 +66,7 @@ export async function saveExerciseVideo(
       throw new Error(`Failed to upload video: ${uploadError.message}`)
     }
     
-    console.log(`✅ Video uploaded to Supabase:`, uploadData)
+    console.log(`Video uploaded to Supabase:`, uploadData)
     
     const { data: urlData } = supabase.storage
       .from(SUPABASE_BUCKET)
@@ -76,7 +76,7 @@ export async function saveExerciseVideo(
       throw new Error("Failed to get public URL for uploaded video")
     }
     
-    console.log(`🔗 Public URL:`, urlData.publicUrl)
+    console.log(`Public URL:`, urlData.publicUrl)
     
 
     const video: ExerciseVideo = {
@@ -93,7 +93,7 @@ export async function saveExerciseVideo(
     videos.push(video)
     saveVideos(videos)
     
-    console.log(`✅ Exercise video saved with ID: ${id}`)
+    console.log(`Exercise video saved with ID: ${id}`)
     return video
     
   } catch (err) {
@@ -104,16 +104,16 @@ export async function saveExerciseVideo(
 
 export function getAllExercises(): ExerciseVideo[] {
   const videos = getVideos()
-  console.log(`📂 Retrieved ${videos.length} exercise videos from storage`)
+  console.log(`Retrieved ${videos.length} exercise videos from storage`)
   return videos
 }
 
 export function getExercise(id: string): ExerciseVideo | undefined {
   const video = getVideos().find((v) => v.id === id)
   if (video) {
-    console.log(`✅ Found exercise video: ${video.name} (${video.type})`)
+    console.log(`Found exercise video: ${video.name} (${video.type})`)
   } else {
-    console.warn(`⚠️ Exercise video not found: ${id}`)
+    console.warn(`Exercise video not found: ${id}`)
   }
   return video
 }
@@ -144,7 +144,7 @@ export async function deleteExercise(id: string): Promise<boolean> {
         if (error) {
           console.error("❌ Error deleting from Supabase:", error)
         } else {
-          console.log("✅ Deleted from Supabase")
+          console.log("Deleted from Supabase")
         }
       }
     } catch (err) {
@@ -154,11 +154,11 @@ export async function deleteExercise(id: string): Promise<boolean> {
   
   const filtered = videos.filter((v) => v.id !== id)
   saveVideos(filtered)
-  console.log(`🗑️ Deleted exercise video: ${id}`)
+  console.log(`Deleted exercise video: ${id}`)
   return true
 }
 
 export function clearAllExercises(): void {
   localStorage.removeItem(STORAGE_KEY)
-  console.log("🗑️ Cleared all exercise videos")
+  console.log("Cleared all exercise videos")
 }

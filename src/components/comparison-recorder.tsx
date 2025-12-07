@@ -18,28 +18,28 @@ export function ComparisonRecorder({ onVideoRecorded }: ComparisonRecorderProps)
   const [isStreaming, setIsStreaming] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
-  const POSE_CONNECTIONS: Array<[number, number]> = [
+  const POSE_CONNECTIONS: Array<{ start: number; end: number }> = [
     // making line connections that make sense i.e knee to ankle makes sense, nose to knee doesn't make sense - does that make sense?
-    [11, 12], 
-    [11, 23], 
-    [12, 24], 
-    [23, 24], 
-    [11, 13], 
-    [13, 15], 
-    [12, 14], 
-    [14, 16], 
-    [23, 25], 
-    [25, 27], 
-    [27, 29], 
-    [29, 31], 
-    [24, 26], 
-    [26, 28], 
-    [28, 30], 
-    [30, 32], 
-    [0, 1], 
-    [0, 2], 
-    [1, 3], 
-    [2, 4], 
+    { start: 11, end: 12 },
+    { start: 11, end: 23 },
+    { start: 12, end: 24 },
+    { start: 23, end: 24 },
+    { start: 11, end: 13 },
+    { start: 13, end: 15 },
+    { start: 12, end: 14 },
+    { start: 14, end: 16 },
+    { start: 23, end: 25 },
+    { start: 25, end: 27 },
+    { start: 27, end: 29 },
+    { start: 29, end: 31 },
+    { start: 24, end: 26 },
+    { start: 26, end: 28 },
+    { start: 28, end: 30 },
+    { start: 30, end: 32 },
+    { start: 0, end: 1 },
+    { start: 0, end: 2 },
+    { start: 1, end: 3 },
+    { start: 2, end: 4 },
   ]
 
   const openWebcam = async () => {

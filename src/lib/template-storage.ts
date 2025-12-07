@@ -8,9 +8,8 @@ export interface SavedTemplate {
   id: string
   template: LearnedExerciseTemplate
   savedAt: string
-  videoUrl?: string // Optional reference to the video blob URL
+  videoUrl?: string 
 }
-
 /**
  * Save a learned template to local storage
  */
@@ -54,7 +53,7 @@ export function saveTemplate(
     tryPersistTemplates(templates)
   }
 
-  console.log(`✅ Saved template: ${id}`)
+  console.log(`Saved template: ${id}`)
   return id
 }
 
@@ -128,7 +127,7 @@ export function exportTemplates(): void {
   linkElement.setAttribute('download', exportFileDefaultName)
   linkElement.click()
   
-  console.log(`📥 Exported ${templates.length} templates`)
+  console.log(`Exported ${templates.length} templates`)
 }
 
 /**
@@ -151,7 +150,7 @@ export function importTemplates(jsonString: string): number {
     })
     
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
-    console.log(`📤 Imported ${addedCount} new templates`)
+    console.log(`Imported ${addedCount} new templates`)
     
     return addedCount
   } catch (error) {
@@ -167,14 +166,14 @@ function tryPersistTemplates(templates: SavedTemplate[]) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(templates))
   } catch (err: any) {
     if (isQuotaExceeded(err)) {
-      console.warn("⚠️ Quota exceeded while saving templates. Attempting to remove video previews…")
+      console.warn("Quota exceeded while saving templates. Attempting to remove video previews…")
       // Remove videoUrl fields from newest backwards until success
       for (let i = templates.length - 1; i >= 0; i--) {
         if (templates[i].videoUrl) {
           delete templates[i].videoUrl
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(templates))
-            console.info("✅ Saved after removing inline previews.")
+            console.info("Saved after removing inline previews.")
             return
           } catch (e) {
             // continue cleanup
@@ -185,7 +184,7 @@ function tryPersistTemplates(templates: SavedTemplate[]) {
       const minimal = templates.map(t => ({ id: t.id, savedAt: t.savedAt, template: t.template }))
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal))
-        console.info("✅ Stored minimal template data after cleanup.")
+        console.info("Stored minimal template data after cleanup.")
       } catch (e2) {
         console.error("❌ Failed to persist minimal template data.", e2)
       }
@@ -214,6 +213,6 @@ export function purgeTemplateVideoPreviews(): number {
     }
   })
   tryPersistTemplates(templates)
-  console.log(`🧹 Purged ${removed} inline video previews from templates.`)
+  console.log(`Purged ${removed} inline video previews from templates.`)
   return removed
 }

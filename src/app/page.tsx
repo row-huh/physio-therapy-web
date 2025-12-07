@@ -6,6 +6,10 @@ import { Card } from "@/components/ui/card"
 import Link from "next/link"
 import { getAllExercises, deleteExercise, type ExerciseVideo } from "@/lib/storage"
 
+
+// storing learnt states in usestate for now 
+// will connect with supabase later after setting up user profiles and auth
+
 export default function Home() {
   const [exercises, setExercises] = useState<ExerciseVideo[]>([])
   const [step, setStep] = useState<"list" | "create">("list")
