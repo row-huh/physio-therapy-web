@@ -1,7 +1,5 @@
 "use client"
 
-
-
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -88,13 +86,13 @@ export default function ComparePage() {
 
 
     try {
-      console.log("🔍 Starting video comparison...")
+      console.log("Starting video comparison...")
       let referenceTemplate: LearnedExerciseTemplate
       if (exercise.learnedTemplate) {
-        console.log("✅ Using stored reference template")
+        console.log("Using stored reference template")
         referenceTemplate = exercise.learnedTemplate
       } else {
-        console.warn("⚠️ No stored template found, analyzing reference video...")
+        console.warn("No stored template found, analyzing reference video...")
         const referenceBlob = await fetch(exercise.videoUrl).then(r => r.blob())
         const referenceAnalysis = await analyzeVideoForPose(
           referenceBlob,

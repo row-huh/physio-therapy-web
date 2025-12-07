@@ -4,7 +4,6 @@ import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { VideoRecorder } from "@/components/video-recorder"
 import { SimpleRecorder } from "@/components/simple-recorder"
 import { VideoAnalysisPlayer } from "@/components/video-analysis-player"
 import { LearnedTemplateView } from "@/components/learned-template-view"
@@ -16,6 +15,8 @@ import { analyzeVideoForPose, type PoseAnalysisResult } from "@/lib/pose-analyze
 import { EXERCISE_CONFIGS, getExerciseConfig } from "@/lib/exercise-config"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { VideoRecorder } from "@components/video-recorder"
+
 
 export default function RecordPage() {
   const router = useRouter()
@@ -77,6 +78,7 @@ export default function RecordPage() {
         console.log("Starting video analysis...")
         
         // Get angles of interest for the selected exercise type
+        // for knee exercises, the only angles of interest are legs so you skip calculation for all the other angles to save compute tiem
         const exerciseConfig = getExerciseConfig(exerciseType)
         const anglesOfInterest = exerciseConfig?.anglesOfInterest
         
@@ -84,6 +86,7 @@ export default function RecordPage() {
         console.log(`Angles of interest:`, anglesOfInterest)
         
         // Pass exercise info for state learning
+        // state learning works with k means clustering to group some specific angles in states
         const exerciseInfo = {
           name: exerciseName.trim() || exerciseConfig?.name || "exercise",
           type: exerciseType,
@@ -102,16 +105,14 @@ export default function RecordPage() {
         console.log("Summary:\n", result.summary)
         
         if (result.learnedTemplate) {
-          console.log("🎯 Learned Template:", result.learnedTemplate)
+          console.log("Learned Template:", result.learnedTemplate)
         }
         
-        // Save the video with exercise type as name if no custom name provided
         const videoName = exerciseName.trim() || exerciseConfig?.name || "exercise"
         await saveExerciseVideo(videoName, recordedBlob, exerciseType, result.learnedTemplate)
         
-        console.log("✅ Video saved successfully!")
+        console.log("Video saved successfully!")
         
-        // Analysis is complete, stay on this page to show results
       } catch (error) {
         console.error("Error analyzing video:", error)
         alert(`Error analyzing video: ${error instanceof Error ? error.message : "Unknown error"}`)
@@ -215,7 +216,7 @@ export default function RecordPage() {
               <h1 className="text-3xl font-bold mb-2">{exercise.name}</h1>
               <p className="text-muted-foreground">Capture the key positions for this exercise</p>
             </div>
-
+          
             <VideoRecorder onPoseCaptured={handlePoseCaptured} />
 
             <Card className="p-6 space-y-4">

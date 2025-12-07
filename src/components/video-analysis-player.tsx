@@ -36,7 +36,6 @@ class OneEuroFilter {
       return x
     }
     
-    // Estimate velocity
     const dx = (x - this.x_prev) / t_e
     const edx = this.exponentialSmoothing(
       this.smoothingFactor(t_e, this.d_cutoff),
@@ -44,17 +43,14 @@ class OneEuroFilter {
       this.dx_prev
     )
     
-    // Adaptive cutoff based on velocity
     const cutoff = this.min_cutoff + this.beta * Math.abs(edx)
     
-    // Smooth the signal
     const x_filtered = this.exponentialSmoothing(
       this.smoothingFactor(t_e, cutoff),
       x,
       this.x_prev
     )
     
-    // Store for next iteration
     this.x_prev = x_filtered
     this.dx_prev = edx
     this.t_prev = t
@@ -83,7 +79,6 @@ export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: 
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   
-  // One Euro Filters for each landmark coordinate
   const landmarkFiltersRef = useRef<Map<string, { x: OneEuroFilter; y: OneEuroFilter; z: OneEuroFilter }>>(new Map())
 
   useEffect(() => {
@@ -102,14 +97,12 @@ export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: 
     try {
       setIsLoading(true)
 
-      // Initialize MediaPipe
       const vision = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
       )
 
       const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: {
-          // Use full model for better stability (not lite)
           modelAssetPath:
             "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
           delegate: "GPU",
@@ -123,7 +116,6 @@ export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: 
 
       poseLandmarkerRef.current = poseLandmarker
 
-      // Setup video
       const videoUrl = URL.createObjectURL(videoBlob)
       if (videoRef.current) {
         videoRef.current.src = videoUrl
@@ -223,26 +215,21 @@ export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: 
           }
         })
 
-        // Draw landmarks (bigger points for stability)
         landmarks.forEach((landmark: any, index: number) => {
           ctx.beginPath()
           ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 8, 0, 2 * Math.PI)
           ctx.fillStyle = "#ff0000"
           ctx.fill()
-          // Add a white border for better visibility
           ctx.strokeStyle = "#ffffff"
           ctx.lineWidth = 2
           ctx.stroke()
         })
-
-        // Draw joint angles and segment angles for tracked joints
         drawAngles(ctx, landmarks, canvas.width, canvas.height)
       }
     } catch (error) {
       console.error("Error drawing pose:", error)
     }
 
-    // Draw current movements
     drawCurrentMovements(ctx, canvas.width, canvas.height, video.currentTime)
 
     animationFrameRef.current = requestAnimationFrame(drawPoseAndAnnotations)

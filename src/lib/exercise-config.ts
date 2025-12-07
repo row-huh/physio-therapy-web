@@ -28,6 +28,7 @@ export const EXERCISE_CONFIGS: ExerciseConfig[] = [
       "left_knee",      // Hip-Knee-Ankle angle
       "right_knee",     // Hip-Knee-Ankle angle
       // Segment angles (2-point relative to vertical)
+      // these are kinda irrelevant i think because why bother tracking joints when youo're getting angles anyway
       "left_leg_segment",    // Knee-Ankle segment
       "right_leg_segment",   // Knee-Ankle segment
       "left_thigh_segment",  // Hip-Knee segment
