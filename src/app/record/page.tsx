@@ -7,41 +7,26 @@ import { Input } from "@/components/ui/input"
 import { SimpleRecorder } from "@/components/simple-recorder"
 import { VideoAnalysisPlayer } from "@/components/video-analysis-player"
 import { LearnedTemplateView } from "@/components/learned-template-view"
-import { createExercise, addKeyPose, type Exercise } from "@/lib/pose-store"
 import { saveExerciseVideo } from "@/lib/storage"
 import { saveTemplate } from "@/lib/template-storage"
-import type { Pose } from "@/lib/pose-utils"
 import { analyzeVideoForPose, type PoseAnalysisResult } from "@/lib/pose-analyzer"
 import { EXERCISE_CONFIGS, getExerciseConfig } from "@/lib/exercise-config"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { VideoRecorder } from "@components/video-recorder"
 
 
 export default function RecordPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [step, setStep] = useState<"input" | "recording" | "complete" | "setup">(
+  const [step, setStep] = useState<"input" | "recording" | "complete">(
     searchParams.get("name") ? "recording" : "input",
   )
   const [exerciseName, setExerciseName] = useState(searchParams.get("name") || "")
   const [exerciseType, setExerciseType] = useState(searchParams.get("type") || "knee-extension")
-  const [exerciseDesc, setExerciseDesc] = useState("")
-  const [exercise, setExercise] = useState<Exercise | null>(null)
-  const [capturedPoses, setCapturedPoses] = useState<{ name: string; pose: Pose }[]>([])
-  const [poseName, setPoseName] = useState("")
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<PoseAnalysisResult | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const handleCreateExercise = () => {
-    if (exerciseName.trim()) {
-      const newExercise = createExercise(exerciseName, exerciseDesc)
-      setExercise(newExercise)
-      setStep("recording")
-    }
-  }
 
   const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -51,18 +36,6 @@ export default function RecordPage() {
     } else {
       alert("Please upload a valid video file")
     }
-  }
-
-  const handlePoseCaptured = (pose: Pose) => {
-    if (poseName.trim()) {
-      addKeyPose(exercise!.id, poseName, pose)
-      setCapturedPoses([...capturedPoses, { name: poseName, pose }])
-      setPoseName("")
-    }
-  }
-
-  const handleComplete = () => {
-    setStep("complete")
   }
 
   const handleRecordComplete = (videoBlob: Blob) => {
@@ -177,100 +150,7 @@ export default function RecordPage() {
           </div>
         )}
 
-        {step === "setup" && (
-          <div className="space-y-6">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">Create Exercise Reference</h1>
-              <p className="text-muted-foreground">Set up an exercise with key poses for future comparisons</p>
-            </div>
-
-            <Card className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Exercise Name</label>
-                <Input
-                  placeholder="e.g., Squat"
-                  value={exerciseName}
-                  onChange={(e) => setExerciseName(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Description (optional)</label>
-                <Input
-                  placeholder="e.g., Bodyweight squat with full depth"
-                  value={exerciseDesc}
-                  onChange={(e) => setExerciseDesc(e.target.value)}
-                />
-              </div>
-
-              <Button onClick={handleCreateExercise} disabled={!exerciseName.trim()} className="w-full">
-                Start Recording Poses
-              </Button>
-            </Card>
-          </div>
-        )}
-
-        {step === "recording" && exercise && (
-          <div className="space-y-6">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">{exercise.name}</h1>
-              <p className="text-muted-foreground">Capture the key positions for this exercise</p>
-            </div>
-          
-            <VideoRecorder onPoseCaptured={handlePoseCaptured} />
-
-            <Card className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Pose Name</label>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Examples: Starting Position, Halfway Down, Full Squat
-                </p>
-                <Input
-                  placeholder="Name this pose position"
-                  value={poseName}
-                  onChange={(e) => setPoseName(e.target.value)}
-                />
-              </div>
-            </Card>
-
-            {capturedPoses.length > 0 && (
-              <Card className="p-6">
-                <h3 className="font-semibold mb-4">Captured Poses ({capturedPoses.length})</h3>
-                <div className="space-y-2">
-                  {capturedPoses.map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded">
-                      <span>{item.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {(item.pose.score * 100).toFixed(0)}% confidence
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
-
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setExerciseName("")
-                  setExerciseDesc("")
-                  setExercise(null)
-                  setCapturedPoses([])
-                  setStep("setup")
-                }}
-                className="flex-1"
-              >
-                Back
-              </Button>
-              <Button onClick={handleComplete} disabled={capturedPoses.length === 0} className="flex-1">
-                Complete
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === "recording" && !exercise && (
+        {step === "recording" && (
           <div className="space-y-6">
             <div>
               <h1 className="text-3xl font-bold mb-2">
@@ -534,25 +414,6 @@ export default function RecordPage() {
               </Button>
             )}
           </div>
-        )}
-
-        {step === "complete" && !recordedBlob && exercise && (
-          <Card className="p-8 text-center space-y-4">
-            <h2 className="text-2xl font-bold">Reference Created!</h2>
-            <p className="text-muted-foreground">
-              {exercise?.name} with {capturedPoses.length} key pose{capturedPoses.length !== 1 ? "s" : ""} is ready
-            </p>
-            <div className="flex gap-3">
-              <Link href="/" className="flex-1">
-                <Button variant="outline" className="w-full bg-transparent">
-                  Home
-                </Button>
-              </Link>
-              <Link href="/compare" className="flex-1">
-                <Button className="w-full">Compare Exercise</Button>
-              </Link>
-            </div>
-          </Card>
         )}
       </div>
     </main>
