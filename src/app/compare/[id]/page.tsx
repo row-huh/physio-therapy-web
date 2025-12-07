@@ -93,10 +93,10 @@ export default function ComparePage() {
       // Check if reference video already has a learned template
       let referenceTemplate: LearnedExerciseTemplate
       if (exercise.learnedTemplate) {
-        console.log("✅ Using stored reference template")
+        console.log("Using stored reference template")
         referenceTemplate = exercise.learnedTemplate
       } else {
-        console.warn("⚠️ No stored template found, analyzing reference video...")
+        console.warn("No stored template found, analyzing reference video...")
         const referenceBlob = await fetch(exercise.videoUrl).then(r => r.blob())
         const referenceAnalysis = await analyzeVideoForPose(
           referenceBlob,
