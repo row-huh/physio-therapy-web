@@ -50,8 +50,8 @@ export default function ComparePage() {
   useEffect(() => {
     const ex = getExercise(params.id as string)
     if (ex) {
-      console.log("📹 Loaded exercise:", ex)
-      console.log("🔗 Video URL:", ex.videoUrl)
+      console.log("Loaded exercise:", ex)
+      console.log("Video URL:", ex.videoUrl)
       setExercise(ex)
     }
   }, [params.id])
@@ -89,7 +89,7 @@ export default function ComparePage() {
 
 
     try {
-      console.log("🔍 Starting video comparison...")
+      console.log("Starting video comparison...")
       // Check if reference video already has a learned template
       let referenceTemplate: LearnedExerciseTemplate
       if (exercise.learnedTemplate) {
@@ -117,7 +117,7 @@ export default function ComparePage() {
       console.log(`Exercise config:`, exerciseConfig)
       console.log(`Using angles of interest:`, anglesOfInterest)
       if (!anglesOfInterest || anglesOfInterest.length === 0) {
-        console.warn("⚠️ No angles of interest found, template learning may not work")
+        console.warn("No angles of interest found, template learning may not work")
       }
       const uploadedAnalysis = await analyzeVideoForPose(
         uploadedFile,
@@ -155,12 +155,11 @@ export default function ComparePage() {
     reference: LearnedExerciseTemplate,
     uploaded: LearnedExerciseTemplate
   ): ComparisonResult => {
-    // Compare state matches
     const stateMatches: { [key: string]: number } = {}
     const angleDeviations: { [key: string]: number } = {}
 
 
-    // For each state in reference, find closest match in uploaded
+
     reference.states.forEach((refState) => {
       const closestMatch = uploaded.states.reduce((best, upState) => {
         const similarity = calculateStateSimilarity(refState, upState)
@@ -172,7 +171,6 @@ export default function ComparePage() {
     })
 
 
-    // Calculate angle deviations for each angle across all states
     const allAngles = new Set<string>()
     reference.states.forEach(s =>
       Object.keys(s.angleRanges).forEach(angle => allAngles.add(angle))
@@ -196,7 +194,6 @@ export default function ComparePage() {
     })
 
 
-    // Calculate overall similarity (0-100)
     const stateSimilarity = Object.values(stateMatches).reduce((a, b) => a + b, 0) / Object.values(stateMatches).length
     const angleAccuracy = 100 - Math.min(100,
       Object.values(angleDeviations).reduce((a, b) => a + b, 0) / Object.values(angleDeviations).length
@@ -231,7 +228,6 @@ export default function ComparePage() {
       const mean1 = state1.angleRanges[angle].mean
       const mean2 = state2.angleRanges[angle].mean
       const diff = Math.abs(mean1 - mean2)
-      // Convert angle difference to similarity (0-100)
       return Math.max(0, 100 - (diff / 180) * 100)
     })
 
@@ -376,7 +372,12 @@ export default function ComparePage() {
                 Change Method
               </Button>
             </div>
-            <ComparisonRecorder onVideoRecorded={handleVideoRecorded} />
+            <ComparisonRecorder 
+              onVideoRecorded={handleVideoRecorded}
+              anglesOfInterest={exercise?.anglesOfInterest}
+              exerciseName={exercise?.name}
+              enableTestMode={true}
+            />
             {uploadedFile && (
               <Card className="p-4">
                 <div className="flex items-center justify-between">
@@ -439,7 +440,7 @@ export default function ComparePage() {
                   )
                 }}
                 onLoadedData={() => {
-                  console.log("✅ Video loaded successfully")
+                  console.log("Video loaded successfully")
                   setVideoError(null)
                 }}
               >
