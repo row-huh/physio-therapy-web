@@ -256,14 +256,14 @@ export default function RecordPage() {
                   anglesOfInterest={getExerciseConfig(exerciseType)?.anglesOfInterest}
                 />
 
-                <Card className="p-6">
+                {/* <Card className="p-6">
                   <h3 className="font-semibold mb-4">Movement Summary</h3>
                   <pre className="text-xs whitespace-pre-wrap bg-muted p-4 rounded overflow-x-auto">
                     {analysisResult.summary}
                   </pre>
-                </Card>
+                </Card> */}
 
-                <Card className="p-6">
+                {/* <Card className="p-6">
                   <h3 className="font-semibold mb-4">Detected Movements ({analysisResult.movements.length})</h3>
                   <div className="space-y-2 max-h-96 overflow-y-auto">
                     {analysisResult.movements.map((movement, idx) => (
@@ -284,9 +284,9 @@ export default function RecordPage() {
                       </div>
                     ))}
                   </div>
-                </Card>
+                </Card> */}
 
-                <Card className="p-6">
+               {/* <Card className="p-6">
                   <h3 className="font-semibold mb-4">
                     Angle Data ({analysisResult.jointAngles.length} measurements)
                   </h3>
@@ -294,7 +294,6 @@ export default function RecordPage() {
                     All angle measurements captured throughout the video
                   </p>
                   
-                  {/* Group angles by joint/segment */}
                   <div className="space-y-4 max-h-96 overflow-y-auto">
                     {(() => {
                       // Group joint angles by joint name
@@ -357,7 +356,6 @@ export default function RecordPage() {
                               </div>
                             </div>
                             
-                            {/* Show first, middle, and last values as samples */}
                             <details className="mt-3">
                               <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
                                 Show sample values
@@ -376,16 +374,15 @@ export default function RecordPage() {
                       })
                     })()}
                   </div>
-                </Card>
+                </Card> */}
 
-                {/* Learned Template Display */}
                 {analysisResult.learnedTemplate && (
                   <LearnedTemplateView 
                     template={analysisResult.learnedTemplate}
                     onSaveTemplate={() => {
                       const templateId = saveTemplate(analysisResult.learnedTemplate!, recordedBlob)
                       console.log("Saved template with ID:", templateId)
-                      alert(`✅ Template saved! You can now use "${analysisResult.learnedTemplate!.exerciseName}" as a reference for comparisons.`)
+                      alert(`Template saved! You can now use "${analysisResult.learnedTemplate!.exerciseName}" as a reference for comparisons.`)
                     }}
                   />
                 )}
