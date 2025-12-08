@@ -9,6 +9,7 @@ interface ComparisonRecorderProps {
   onVideoRecorded?: (videoBlob: Blob) => void
   anglesOfInterest?: string[]
   exerciseName?: string
+  exerciseType?: string
   enableTestMode?: boolean // doing dis to test it on uploaded videos (because why would i perform knee extensions every 3 secs like an idiot)
 }
 
@@ -26,6 +27,7 @@ const POSE_LANDMARKS = {
   LEFT_ANKLE: 27,
   RIGHT_ANKLE: 28,
 }
+
 
 class OneEuroFilter {
   private x_prev: number = 0
@@ -87,7 +89,7 @@ interface JointAngleData {
   [key: string]: number
 }
 
-export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exerciseName, enableTestMode = false }: ComparisonRecorderProps) {
+export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exerciseName, exerciseType, enableTestMode = false }: ComparisonRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -100,62 +102,65 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const [currentAngles, setCurrentAngles] = useState<JointAngleData>({})
   const [repCount, setRepCount] = useState(0)
   const [currentState, setCurrentState] = useState<string>("")
+  const [formScore, setFormScore] = useState<number | null>(null)
+  const [templateName, setTemplateName] = useState<string | null>(null)
+  const [templateState, setTemplateState] = useState<string | null>(null)
   
-
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
-
   const angleFiltersRef = useRef<Map<string, OneEuroFilter>>(new Map())
-  
   const angleHistoryRef = useRef<Array<{ timestamp: number; angles: JointAngleData }>>([])
+  const primaryAngleHistoryRef = useRef<Array<{ t: number; value: number }>>([])
   const lastStateRef = useRef<string>("")
   const hasVisitedPeakRef = useRef(false)
+  const stateChangeTimestampRef = useRef<number>(0)
+  
+  const minAngleSeenRef = useRef<number>(180)
+  const maxAngleSeenRef = useRef<number>(0)
+  const hasLearnedThresholdsRef = useRef(false)
+  const flexedThresholdRef = useRef<number>(90)
+  const extendedThresholdRef = useRef<number>(140)
+  const learnedTemplateRef = useRef<import("@/lib/exercise-state-learner").LearnedExerciseTemplate | null>(null)
 
   const POSE_CONNECTIONS = [
-    // Face
-    { start: 0, end: 1 },   // nose to left eye inner
-    { start: 1, end: 2 },   // left eye inner to left eye
-    { start: 2, end: 3 },   // left eye to left eye outer
-    { start: 3, end: 7 },   // left eye outer to left ear
-    { start: 0, end: 4 },   // nose to right eye inner
-    { start: 4, end: 5 },   // right eye inner to right eye
-    { start: 5, end: 6 },   // right eye to right eye outer
-    { start: 6, end: 8 },   // right eye outer to right ear
-    { start: 9, end: 10 },  // mouth left to mouth right
-    // Torso
-    { start: 11, end: 12 }, // left shoulder to right shoulder
-    { start: 11, end: 23 }, // left shoulder to left hip
-    { start: 12, end: 24 }, // right shoulder to right hip
-    { start: 23, end: 24 }, // left hip to right hip
-    // Left arm
-    { start: 11, end: 13 }, // left shoulder to left elbow
-    { start: 13, end: 15 }, // left elbow to left wrist
-    { start: 15, end: 17 }, // left wrist to left pinky
-    { start: 15, end: 19 }, // left wrist to left index
-    { start: 15, end: 21 }, // left wrist to left thumb
-    { start: 17, end: 19 }, // left pinky to left index
-    // Right arm
-    { start: 12, end: 14 }, // right shoulder to right elbow
-    { start: 14, end: 16 }, // right elbow to right wrist
-    { start: 16, end: 18 }, // right wrist to right pinky
-    { start: 16, end: 20 }, // right wrist to right index
-    { start: 16, end: 22 }, // right wrist to right thumb
-    { start: 18, end: 20 }, // right pinky to right index
-    // Left leg
-    { start: 23, end: 25 }, // left hip to left knee
-    { start: 25, end: 27 }, // left knee to left ankle
-    { start: 27, end: 29 }, // left ankle to left heel
-    { start: 27, end: 31 }, // left ankle to left foot index
-    { start: 29, end: 31 }, // left heel to left foot index
-    // Right leg
-    { start: 24, end: 26 }, // right hip to right knee
-    { start: 26, end: 28 }, // right knee to right ankle
-    { start: 28, end: 30 }, // right ankle to right heel
-    { start: 28, end: 32 }, // right ankle to right foot index
-    { start: 30, end: 32 }, // right heel to right foot index
+    { start: 0, end: 1 },
+    { start: 1, end: 2 },
+    { start: 2, end: 3 },
+    { start: 3, end: 7 },
+    { start: 0, end: 4 },
+    { start: 4, end: 5 },
+    { start: 5, end: 6 },
+    { start: 6, end: 8 },
+    { start: 9, end: 10 },
+    { start: 11, end: 12 },
+    { start: 11, end: 23 },
+    { start: 12, end: 24 },
+    { start: 23, end: 24 },
+    { start: 11, end: 13 },
+    { start: 13, end: 15 },
+    { start: 15, end: 17 },
+    { start: 15, end: 19 },
+    { start: 15, end: 21 },
+    { start: 17, end: 19 },
+    { start: 12, end: 14 },
+    { start: 14, end: 16 },
+    { start: 16, end: 18 },
+    { start: 16, end: 20 },
+    { start: 16, end: 22 },
+    { start: 18, end: 20 },
+    { start: 23, end: 25 },
+    { start: 25, end: 27 },
+    { start: 27, end: 29 },
+    { start: 27, end: 31 },
+    { start: 29, end: 31 },
+    { start: 24, end: 26 },
+    { start: 26, end: 28 },
+    { start: 28, end: 30 },
+    { start: 28, end: 32 },
+    { start: 30, end: 32 },
   ]
 
 
@@ -177,6 +182,8 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     return degrees
   }
 
+
+  // todo: calculate only relevant angles to save compute time
   const calculateAllAngles = (landmarks: any[]): JointAngleData => {
     const angles: JointAngleData = {}
     const getLandmark = (index: number) => [landmarks[index].x, landmarks[index].y]
@@ -244,6 +251,10 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     return angles
   }
 
+
+  // ROHA TO FUTURE ROHA: THIS IS PROBABLY MAKING THE KNEE ANGLES WEIRD
+  // despite the angle moving with the knee there's some stiffness idk
+  // the knee angle wouldn't follow the leg properly if that makes sense and this is probably the problem 
   const smoothAngles = (rawAngles: JointAngleData, timestamp: number): JointAngleData => {
     const smoothed: JointAngleData = {}
     
@@ -260,6 +271,8 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }
 
 
+// figures out reps by seeing the maaximum and minimum angles aa joint was flexed/extended 
+// to be decided later whether a rep should be counter even if it's above or below the max/min thresholds
   const determineExerciseState = (angles: JointAngleData): string => {
     if (!anglesOfInterest || anglesOfInterest.length === 0) return ""
     
@@ -268,11 +281,31 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     
     if (angle === undefined) return ""
     
-    // thresholds here are assumed - because it makes it easier to run state detection later on 
-    // state detection then knows what to look for
-    if (angle < 70) {
+    if (angle < minAngleSeenRef.current) {
+      minAngleSeenRef.current = angle
+    }
+    if (angle > maxAngleSeenRef.current) {
+      maxAngleSeenRef.current = angle
+    }
+    
+    if (!hasLearnedThresholdsRef.current && angleHistoryRef.current.length > 60) {
+      const range = maxAngleSeenRef.current - minAngleSeenRef.current
+      if (range > 20) {
+        const mid = (maxAngleSeenRef.current + minAngleSeenRef.current) / 2
+        const band = Math.max(5, range * 0.1)
+        flexedThresholdRef.current = mid - band
+        extendedThresholdRef.current = mid + band
+        hasLearnedThresholdsRef.current = true
+        console.log(`Learned hysteresis thresholds: flexed < ${Math.round(flexedThresholdRef.current)}°, extended > ${Math.round(extendedThresholdRef.current)}° (range ${Math.round(range)}°)`)        
+      }
+    }
+    
+    const flexedThreshold = flexedThresholdRef.current
+    const extendedThreshold = extendedThresholdRef.current
+    
+    if (angle < flexedThreshold) {
       return "flexed"
-    } else if (angle > 150) {
+    } else if (angle > extendedThreshold) {
       return "extended"
     } else {
       return "transition"
@@ -280,19 +313,27 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }
 
 
-  const updateRepCount = (state: string) => {
-    if (!state || state === "transition") return
+  // this just feels wrong but i cant yet prove why - maybe it's recalculation of the same state thing that is being stored in exercise templates 
+  const updateRepCount = (state: string, timestamp: number) => {
+    if (!state) return
     
-    if (state === "extended") {
-      hasVisitedPeakRef.current = true
+    const MIN_STATE_DURATION = 0.2
+    if (state !== lastStateRef.current) {
+      const timeSinceLastChange = timestamp - stateChangeTimestampRef.current
+      if (timeSinceLastChange < MIN_STATE_DURATION && lastStateRef.current !== "") {
+        return
+      }
+      // Sequence: trough (flexed) -> peak (extended) -> trough counts one rep
+      if (state === "extended" && lastStateRef.current === "flexed") {
+        hasVisitedPeakRef.current = true
+      }
+      if (state === "flexed" && hasVisitedPeakRef.current && lastStateRef.current === "extended") {
+        setRepCount(prev => prev + 1)
+        hasVisitedPeakRef.current = false
+      }
+      lastStateRef.current = state
+      stateChangeTimestampRef.current = timestamp
     }
-    
-    if (state === "flexed" && hasVisitedPeakRef.current && lastStateRef.current === "extended") {
-      setRepCount(prev => prev + 1)
-      hasVisitedPeakRef.current = false
-    }
-    
-    lastStateRef.current = state
   }
 
   const openWebcam = async () => {
@@ -340,7 +381,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
       if (videoRef.current) {
         videoRef.current.srcObject = null
         videoRef.current.src = videoUrl
-        videoRef.current.loop = true
+        videoRef.current.loop = false
         
         await new Promise<void>((resolve) => {
           videoRef.current!.onloadedmetadata = () => {
@@ -356,7 +397,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         setTestMode(true)
         setIsStreaming(true)
         
-        // Start playing and processing
         await videoRef.current.play()
         setIsPlaying(true)
         startPoseLoop()
@@ -391,11 +431,17 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     setCurrentAngles({})
     lastStateRef.current = ""
     hasVisitedPeakRef.current = false
+    stateChangeTimestampRef.current = 0
     angleFiltersRef.current.clear()
     angleHistoryRef.current = []
+    
+    minAngleSeenRef.current = 180
+    maxAngleSeenRef.current = 0
+    hasLearnedThresholdsRef.current = false
+    flexedThresholdRef.current = 90
+    extendedThresholdRef.current = 140
   }
 
-  // NEW: Stop test mode
   const stopTestMode = () => {
     if (videoRef.current) {
       videoRef.current.pause()
@@ -414,8 +460,15 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     setCurrentAngles({})
     lastStateRef.current = ""
     hasVisitedPeakRef.current = false
+    stateChangeTimestampRef.current = 0
     angleFiltersRef.current.clear()
     angleHistoryRef.current = []
+    
+    minAngleSeenRef.current = 180
+    maxAngleSeenRef.current = 0
+    hasLearnedThresholdsRef.current = false
+    flexedThresholdRef.current = 90
+    extendedThresholdRef.current = 140
   }
 
   const initPose = async () => {
@@ -467,7 +520,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
       if (result.landmarks && result.landmarks.length > 0) {
         const landmarks = result.landmarks[0]
         
-        // Calculate all angles
         const rawAngles = calculateAllAngles(landmarks)
         const smoothedAngles = smoothAngles(rawAngles, ts / 1000)
         
@@ -479,15 +531,68 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           timestamp: ts / 1000,
           angles: smoothedAngles
         })
+        // Maintain primary angle time-series for peak/trough detection and similarity metrics
+        if (anglesOfInterest && anglesOfInterest.length > 0) {
+          // Prefer right_knee; fallback to left_knee if undefined
+          const preferred = "right_knee"
+          const primary = smoothedAngles[preferred] !== undefined ? preferred : anglesOfInterest[0]
+          const val = smoothedAngles[primary] ?? smoothedAngles["left_knee"]
+          if (val !== undefined) {
+            primaryAngleHistoryRef.current.push({ t: ts / 1000, value: val })
+            const cutoffT = (ts / 1000) - 12
+            primaryAngleHistoryRef.current = primaryAngleHistoryRef.current.filter(p => p.t > cutoffT)
+          }
+        }
                 const cutoffTime = (ts / 1000) - 10
         angleHistoryRef.current = angleHistoryRef.current.filter(
           h => h.timestamp > cutoffTime
         )
         
-        const state = determineExerciseState(smoothedAngles)
-        if (state) {
-          setCurrentState(state)
-          updateRepCount(state)
+        // Template-driven state and reps if template is present; else fallback
+        let stateLabel = ""
+        if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
+          const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
+          stateLabel = mapped?.name || ""
+          if (stateLabel) setTemplateState(stateLabel)
+          // Template-driven rep count in-component: Start->Peak->Start
+          const primary = anglesOfInterest[0]
+          const sortable = learnedTemplateRef.current.states.filter(s => s.angleRanges[primary])
+          if (mapped && sortable.length >= 2) {
+            const sorted = [...sortable].sort((a, b) => a.angleRanges[primary].mean - b.angleRanges[primary].mean)
+            const startId = sorted[0].id
+            const peakId = sorted[sorted.length - 1].id
+            const MIN_STATE_DURATION = 0.2
+            if (mapped.id !== lastStateRef.current) {
+              const dt = (ts / 1000) - stateChangeTimestampRef.current
+              if (dt >= MIN_STATE_DURATION || lastStateRef.current === "") {
+                if (mapped.id === peakId && lastStateRef.current === startId) {
+                  hasVisitedPeakRef.current = true
+                }
+                if (mapped.id === startId && hasVisitedPeakRef.current && lastStateRef.current === peakId) {
+                  setRepCount(prev => prev + 1)
+                  hasVisitedPeakRef.current = false
+                }
+                lastStateRef.current = mapped.id
+                stateChangeTimestampRef.current = ts / 1000
+              }
+            }
+          }
+        } else {
+          const state = determineExerciseState(smoothedAngles)
+          stateLabel = state
+          if (state) {
+            setCurrentState(state)
+            updateRepCount(state, ts / 1000)
+          }
+        }
+
+        if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
+          const score = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
+          setFormScore(Math.round(score))
+        }
+
+        if (anglesOfInterest && anglesOfInterest.length > 0) {
+          updateRepCountFromSignal()
         }
         
         drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
@@ -503,12 +608,123 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         })
         
         drawAngleAnnotations(ctx, landmarks, smoothedAngles)
+        drawLiveMetrics(ctx)
       }
 
       rafRef.current = requestAnimationFrame(render)
     }
 
     rafRef.current = requestAnimationFrame(render)
+  }
+
+  const drawLiveMetrics = (ctx: CanvasRenderingContext2D) => {
+    if (!anglesOfInterest || anglesOfInterest.length === 0) return
+    const primary = anglesOfInterest[0]
+    const width = canvasRef.current?.width || 640
+    const height = canvasRef.current?.height || 480
+    const series = primaryAngleHistoryRef.current
+    if (series.length < 15) return
+    const values = series.map(s => s.value)
+    const rom = Math.max(0, Math.min(100, ((Math.max(...values) - Math.min(...values)) / 180) * 100))
+
+    const recentStartT = series[0].t
+    const recentEndT = series[series.length - 1].t
+    const windowSec = Math.max(1, recentEndT - recentStartT)
+
+    let similarity = 0
+    if (values.length >= 30) {
+      const mid = Math.floor(values.length / 2)
+      const a = values.slice(0, mid)
+      const b = values.slice(values.length - mid)
+      const norm = (arr: number[]) => {
+        const m = arr.reduce((s, v) => s + v, 0) / arr.length
+        const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) * (v - m), 0) / arr.length) || 1
+        return arr.map(v => (v - m) / sd)
+      }
+      const an = norm(a)
+      const bn = norm(b)
+      const len = Math.min(an.length, bn.length)
+      const dot = an.slice(0, len).reduce((s, v, i) => s + v * bn[i], 0)
+      similarity = Math.max(0, Math.min(100, (dot / len) * 50 + 50)) // map [-1,1] -> [0,100]
+    }
+
+    ctx.save()
+    ctx.fillStyle = "#111827CC"
+    ctx.strokeStyle = "#9333ea"
+    ctx.lineWidth = 2
+    const boxW = 240
+    const boxH = 100
+    const x = 20
+    const y = height - boxH - 20
+    ctx.fillRect(x, y, boxW, boxH)
+    ctx.strokeRect(x, y, boxW, boxH)
+    ctx.fillStyle = "#a78bfa"
+    ctx.font = "bold 14px Arial"
+    ctx.fillText("LIVE METRICS", x + 12, y + 22)
+    ctx.fillStyle = "#ffffff"
+    ctx.font = "12px Arial"
+    ctx.fillText(`ROM: ${Math.round(rom)}%`, x + 12, y + 44)
+    ctx.fillText(`Tempo: ${(repCount / (windowSec / 60)).toFixed(1)} reps/min`, x + 12, y + 64)
+    ctx.fillText(`Similarity: ${Math.round(similarity)}%`, x + 12, y + 84)
+    ctx.restore()
+  }
+
+
+  const repSignalStateRef = useRef<{ lastPeak?: number; lastTrough?: number; lastDirection?: 'up' | 'down' | null; lastChangeT?: number }>({ lastDirection: null, lastChangeT: 0 })
+  const updateRepCountFromSignal = () => {
+    const series = primaryAngleHistoryRef.current
+    if (series.length < 8) return
+    const recent = series.slice(-30)
+    const n = recent.length
+    const deriv: number[] = []
+    for (let i = 1; i < n; i++) {
+      const dt = Math.max(0.016, recent[i].t - recent[i - 1].t)
+      deriv.push((recent[i].value - recent[i - 1].value) / dt)
+    }
+    const alpha = 0.3
+    for (let i = 1; i < deriv.length; i++) {
+      deriv[i] = alpha * deriv[i] + (1 - alpha) * deriv[i - 1]
+    }
+    const lastIdx = deriv.length - 1
+    const prev = deriv[lastIdx - 1]
+    const curr = deriv[lastIdx]
+    const nowT = recent[recent.length - 1].t
+  const HYST_DERIV = 4 // deg/s hysteresis to avoid noise
+    const MIN_INTERVAL = 0.25 // seconds between state changes
+    const state = repSignalStateRef.current
+  const dir: 'up' | 'down' | null = curr > HYST_DERIV ? 'up' : curr < -HYST_DERIV ? 'down' : (state.lastDirection ?? null)
+    if (!dir) return
+    if (dir !== state.lastDirection) {
+      if (nowT - (state.lastChangeT || 0) < MIN_INTERVAL) {
+        state.lastDirection = dir
+        return
+      }
+      if (state.lastDirection === 'up' && dir === 'down') {
+        state.lastPeak = recent[recent.length - 1].value
+      }
+      if (state.lastDirection === 'down' && dir === 'up') {
+        state.lastTrough = recent[recent.length - 1].value
+        if (state.lastPeak !== undefined && state.lastTrough !== undefined) {
+          const rom = Math.abs(state.lastPeak - state.lastTrough)
+
+          const windowVals = primaryAngleHistoryRef.current.map(p => p.value)
+          const observedRange = windowVals.length > 0 ? (Math.max(...windowVals) - Math.min(...windowVals)) : 0
+          const MIN_ROM = Math.max(20, observedRange * 0.35) 
+          const PEAK_MIN = 148  // slightly lower
+          const TROUGH_MAX = 108 // slightly higher to allow error margin (otherwise reps would be skipped)
+          const peakOK = state.lastPeak >= PEAK_MIN
+          const troughOK = state.lastTrough <= TROUGH_MAX
+          console.log(`[REP DEBUG] ROM=${rom.toFixed(1)} peak=${state.lastPeak?.toFixed(1)} trough=${state.lastTrough?.toFixed(1)} peakOK=${peakOK} troughOK=${troughOK}`)
+          if (rom >= MIN_ROM && peakOK && troughOK) {
+            console.log(`REP COUNTED! Total: ${repCount + 1}`)
+            setRepCount(prev => prev + 1)
+            state.lastPeak = undefined
+          }
+        }
+      }
+      state.lastDirection = dir
+      state.lastChangeT = nowT
+    }
   }
 
   const drawAngleAnnotations = (
@@ -635,6 +851,21 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }
 
   useEffect(() => {
+    try {
+      if (exerciseType) {
+        const { getTemplatesByExerciseType } = require("@/lib/template-storage")
+        const candidates = getTemplatesByExerciseType(exerciseType)
+        const match = (exerciseName 
+          ? candidates.find((t: { template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate }) => t.template.exerciseName === exerciseName) 
+          : candidates[candidates.length - 1]) || null
+        if (match) {
+          learnedTemplateRef.current = match.template
+          setTemplateName(match.template.exerciseName)
+        }
+      }
+    } catch (e) {
+      console.info("No learned template loaded for form scoring.")
+    }
     return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
@@ -673,7 +904,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
               variant="outline"
               className="gap-2"
             >
-              {isLoading ? "Loading…" : "test with Video File"}
+              {isLoading ? "Loading..." : "Test with Video File"}
             </Button>
           </>
         )}
@@ -707,17 +938,19 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         </div>
       )}
 
-      <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
+      <div className="relative bg-muted rounded-lg overflow-hidden">
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="absolute inset-0 w-full h-full object-cover"
+          className="w-full h-auto"
+          style={{ display: 'block' }}
         />
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full"
+          style={{ objectFit: 'contain' }}
         />
         
         {isStreaming && (
@@ -726,13 +959,23 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
             <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-4 border-2 border-green-500">
               <div className="text-sm text-green-400 font-semibold mb-1">REPS</div>
               <div className="text-5xl font-bold text-white">{repCount}</div>
+              {!hasLearnedThresholdsRef.current && angleHistoryRef.current.length < 60 && (
+                <div className="text-xs text-yellow-400 mt-1">Learning...</div>
+              )}
             </div>
             
 
-            {currentState && (
+            {(currentState || templateState) && (
               <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-3 border-2 border-blue-500">
                 <div className="text-sm text-blue-400 font-semibold mb-1">STATE</div>
-                <div className="text-2xl font-bold text-white capitalize">{currentState}</div>
+                <div className="text-2xl font-bold text-white capitalize">{templateState || currentState}</div>
+              </div>
+            )}
+
+            {formScore !== null && (
+              <div className="absolute top-28 right-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-3 border-2 border-purple-500">
+                <div className="text-sm text-purple-400 font-semibold mb-1">FORM SCORE{templateName ? ` · ${templateName}` : ""}</div>
+                <div className="text-2xl font-bold text-white">{formScore}%</div>
               </div>
             )}
             
@@ -741,7 +984,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
                 <div className="text-sm text-purple-400 font-semibold mb-2">LIVE ANGLES</div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {anglesOfInterest && anglesOfInterest.length > 0 ? (
-                    // Show only angles of interest if specified
                     anglesOfInterest.map(angleName => {
                       const angle = currentAngles[angleName]
                       if (angle === undefined) return null
@@ -785,15 +1027,103 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
             realtime tracking guide
           </h4>
           <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-            <li>• <span className="text-cyan-400">Cyan angles</span> = Joint angles (knee/elbow bends)</li>
-            <li>• <span className="text-purple-400">Purple angles</span> = Elbow angles</li>
-            <li>• <span className="text-orange-400">Orange angles</span> = Hip angles</li>
-            <li>• White "seg:" = Segment angles (relative to vertical)</li>
-            <li>• Reps are counted automatically based on movement cycles</li>
-            {exerciseName && <li>• Exercise: <span className="font-semibold">{exerciseName}</span></li>}
+            <li>Cyan = Knee angles</li>
+            <li>Purple = Elbow angles</li>
+            <li>Orange = Hip angles</li>
+            <li>White seg = Segment angles</li>
+            {exerciseName && <li>Exercise: {exerciseName}</li>}
           </ul>
         </div>
       )}
     </Card>
   )
+}
+
+function computeFormScore(
+  angles: JointAngleData,
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  anglesOfInterest: string[]
+): number {
+  const primary = anglesOfInterest[0]
+  const cur = angles[primary]
+  if (cur === undefined) return 0
+  const candidates = template.states.filter(s => s.angleRanges[primary])
+  if (candidates.length === 0) return 0
+  const nearest = candidates.reduce((best, s) => {
+    const m = s.angleRanges[primary].mean
+    const d = Math.abs(cur - m)
+    return (!best || d < Math.abs(cur - best.angleRanges[primary].mean)) ? s : best
+  }, candidates[0])
+  let scores: number[] = []
+  anglesOfInterest.forEach(name => {
+    const val = angles[name]
+    const stats = nearest.angleRanges[name]
+    if (val === undefined || !stats) return
+    const { mean, stdDev, min, max } = stats
+    const clampedVal = Math.max(min, Math.min(max, val))
+    const z = Math.abs((clampedVal - mean) / (stdDev || 1))
+    const score = Math.max(0, 100 - (z * 20))
+    scores.push(score)
+  })
+  if (scores.length === 0) return 0
+  const avg = scores.reduce((s, v) => s + v, 0) / scores.length
+  return Math.max(0, Math.min(100, avg))
+}
+
+function mapToTemplateState(
+  angles: JointAngleData,
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  anglesOfInterest: string[]
+): { id: string; name: string } | null {
+  const primary = anglesOfInterest[0]
+  const cur = angles[primary]
+  if (cur === undefined) return null
+  const candidates = template.states.filter(s => s.angleRanges[primary])
+  if (candidates.length === 0) return null
+  const nearest = candidates.reduce((best, s) => {
+    const m = s.angleRanges[primary].mean
+    const d = Math.abs(cur - m)
+    return (!best || d < Math.abs(cur - best.angleRanges[primary].mean)) ? s : best
+  }, candidates[0])
+  return { id: nearest.id, name: nearest.name }
+}
+
+const templateLastStateRef: { current: string | null } = { current: null }
+const templateVisitedPeakRef: { current: boolean } = { current: false }
+const templateLastChangeTsRef: { current: number } = { current: 0 }
+
+function updateTemplateRepCount(
+  mappedStateId: string | null,
+  timestamp: number,
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  anglesOfInterest: string[]
+) {
+  if (!mappedStateId) return
+  const MIN_STATE_DURATION = 0.2
+  const last = templateLastStateRef.current
+  if (mappedStateId !== last) {
+    const dt = timestamp - templateLastChangeTsRef.current
+    if (dt < MIN_STATE_DURATION && last) return
+    const primary = anglesOfInterest[0]
+    const sortable = template.states.filter(s => s.angleRanges[primary])
+    if (sortable.length < 2) {
+      templateLastStateRef.current = mappedStateId
+      templateLastChangeTsRef.current = timestamp
+      return
+    }
+    const sorted = [...sortable].sort((a, b) => a.angleRanges[primary].mean - b.angleRanges[primary].mean)
+    const startId = sorted[0].id
+    const peakId = sorted[sorted.length - 1].id
+    if (mappedStateId === peakId && last === startId) {
+      templateVisitedPeakRef.current = true
+    }
+    if (mappedStateId === startId && templateVisitedPeakRef.current && last === peakId) {
+      // todo
+      // Increment the global rep counter in component via a custom event pattern
+      // We cannot set state here; instead we rely on calling setRepCount in the render loop (lift state by returning flag)
+      // As we are outside component scope, we return nothing; logic moved back to component caller
+    }
+    templateLastStateRef.current = mappedStateId
+    templateLastChangeTsRef.current = timestamp
+  }
 }

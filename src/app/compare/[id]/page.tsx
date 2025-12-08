@@ -374,8 +374,9 @@ export default function ComparePage() {
             </div>
             <ComparisonRecorder 
               onVideoRecorded={handleVideoRecorded}
-              anglesOfInterest={exercise?.anglesOfInterest}
+              anglesOfInterest={["right_knee"]}
               exerciseName={exercise?.name}
+              exerciseType={exercise?.type}
               enableTestMode={true}
             />
             {uploadedFile && (
