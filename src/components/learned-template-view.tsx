@@ -50,7 +50,7 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
       </Card>
 
       {/* States */}
-      <div className="space-y-4">
+      {/* <div className="space-y-4">
         <h3 className="text-xl font-semibold">Detected States</h3>
         
         {template.states.map((state, index) => (
@@ -64,7 +64,6 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
                 <h4 className="text-lg font-semibold mb-1">{state.name}</h4>
                 <p className="text-sm text-muted-foreground mb-3">{state.description}</p>
                 
-                {/* Angle Ranges */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
                   {Object.entries(state.angleRanges).map(([angleName, range]) => (
                     <div 
@@ -85,7 +84,6 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
                   ))}
                 </div>
                 
-                {/* Occurrences */}
                 <div className="text-sm">
                   <strong>Appears {state.occurrences.length} time(s):</strong>
                   <div className="flex flex-wrap gap-2 mt-1">
@@ -104,10 +102,10 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
             </div>
           </Card>
         ))}
-      </div>
+      </div> */}
 
       {/* State Sequence Flow */}
-      <Card className="p-6">
+      {/* <Card className="p-6">
         <h3 className="text-xl font-semibold mb-4">Exercise Flow</h3>
         <div className="flex items-center gap-2 flex-wrap">
           {template.repSequence.map((stateId, index) => {
@@ -124,10 +122,10 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
             )
           })}
         </div>
-      </Card>
+      </Card> */}
 
       {/* Transitions */}
-      {template.transitions.length > 0 && (
+      {/* {template.transitions.length > 0 && (
         <Card className="p-6">
           <h3 className="text-xl font-semibold mb-4">Transitions</h3>
           <div className="space-y-3">
@@ -163,7 +161,7 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
             })}
           </div>
         </Card>
-      )}
+      )} */}
 
       {/* Actions */}
       {onSaveTemplate && (
