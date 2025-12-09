@@ -597,14 +597,14 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         
         drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
           color: "#22c55e",
-          lineWidth: 3,
+          lineWidth: 8,
         })
         
         drawer.drawLandmarks(landmarks, { 
-          radius: 4, 
+          radius: 8, 
           fillColor: "#22c55e",
           color: "#16a34a",
-          lineWidth: 2 
+          lineWidth: 3 
         })
         
         drawAngleAnnotations(ctx, landmarks, smoothedAngles)
@@ -938,19 +938,17 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         </div>
       )}
 
-      <div className="relative bg-muted rounded-lg overflow-hidden">
+      <div className="relative bg-muted rounded-lg overflow-hidden flex items-center justify-center">
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
           className="w-full h-auto"
-          style={{ display: 'block' }}
         />
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full"
-          style={{ objectFit: 'contain' }}
+          className="absolute top-0 left-0 w-full h-full"
         />
         
         {isStreaming && (
