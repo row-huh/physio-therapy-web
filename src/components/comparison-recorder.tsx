@@ -4,6 +4,8 @@ import { useRef, useState, useEffect } from "react"
 import { PoseLandmarker, FilesetResolver, DrawingUtils, PoseLandmarkerResult } from "@mediapipe/tasks-vision"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { RepErrorGraph } from "@/components/rep-error-graph"
+import { calculateRepError, analyzeRepTrends, getErrorFeedback, type RepError, type RepErrorSummary } from "@/lib/rep-error-calculator"
 
 interface ComparisonRecorderProps {
   onVideoRecorded?: (videoBlob: Blob) => void
@@ -105,6 +107,10 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const [formScore, setFormScore] = useState<number | null>(null)
   const [templateName, setTemplateName] = useState<string | null>(null)
   const [templateState, setTemplateState] = useState<string | null>(null)
+  const [repErrors, setRepErrors] = useState<RepError[]>([])
+  const [errorSummary, setErrorSummary] = useState<RepErrorSummary | null>(null)
+  const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
+  const [errorFeedback, setErrorFeedback] = useState<string>("")
   
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
@@ -569,7 +575,28 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
                   hasVisitedPeakRef.current = true
                 }
                 if (mapped.id === startId && hasVisitedPeakRef.current && lastStateRef.current === peakId) {
-                  setRepCount(prev => prev + 1)
+                  setRepCount(prev => {
+                    const newCount = prev + 1
+                    // Calculate error for completed rep
+                    if (learnedTemplateRef.current && anglesOfInterest) {
+                      const error = calculateRepError(
+                        smoothedAngles,
+                        learnedTemplateRef.current,
+                        anglesOfInterest,
+                        newCount,
+                        ts / 1000
+                      )
+                      if (error) {
+                        setRepErrors(prevErrors => {
+                          const newErrors = [...prevErrors, error]
+                          const summary = analyzeRepTrends(newErrors)
+                          setErrorSummary(summary)
+                          return newErrors
+                        })
+                      }
+                    }
+                    return newCount
+                  })
                   hasVisitedPeakRef.current = false
                 }
                 lastStateRef.current = mapped.id
@@ -589,6 +616,17 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
           const score = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
           setFormScore(Math.round(score))
+          
+          // Calculate real-time error for feedback
+          const realtimeError = calculateRepError(
+            smoothedAngles,
+            learnedTemplateRef.current,
+            anglesOfInterest,
+            repCount + 1,
+            ts / 1000
+          )
+          setCurrentRepError(realtimeError)
+          setErrorFeedback(getErrorFeedback(realtimeError))
         }
 
         if (anglesOfInterest && anglesOfInterest.length > 0) {
@@ -1020,18 +1058,57 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
       </div>
       
       {isStreaming && (
-        <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-          <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
-            realtime tracking guide
-          </h4>
-          <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-            <li>Cyan = Knee angles</li>
-            <li>Purple = Elbow angles</li>
-            <li>Orange = Hip angles</li>
-            <li>White seg = Segment angles</li>
-            {exerciseName && <li>Exercise: {exerciseName}</li>}
-          </ul>
-        </div>
+        <>
+          <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+            <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
+              realtime tracking guide
+            </h4>
+            <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+              <li>Cyan = Knee angles</li>
+              <li>Purple = Elbow angles</li>
+              <li>Orange = Hip angles</li>
+              <li>White seg = Segment angles</li>
+              {exerciseName && <li>Exercise: {exerciseName}</li>}
+            </ul>
+          </div>
+
+          {learnedTemplateRef.current && errorFeedback && (
+            <div className={`border-2 rounded-lg p-4 ${
+              currentRepError && currentRepError.overallError < 10 
+                ? 'bg-green-50 dark:bg-green-950 border-green-500' 
+                : currentRepError && currentRepError.overallError < 20
+                ? 'bg-yellow-50 dark:bg-yellow-950 border-yellow-500'
+                : 'bg-red-50 dark:bg-red-950 border-red-500'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold text-lg mb-1">
+                    {errorFeedback}
+                  </h4>
+                  {currentRepError && (
+                    <div className="text-sm opacity-80">
+                      Current error: {currentRepError.overallError.toFixed(1)}° from template
+                    </div>
+                  )}
+                </div>
+                {currentRepError && (
+                  <div className="text-4xl font-bold">
+                    {currentRepError.formScore.toFixed(0)}%
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {learnedTemplateRef.current && repErrors.length > 0 && (
+            <RepErrorGraph 
+              repErrors={repErrors} 
+              summary={errorSummary}
+              width={600}
+              height={300}
+            />
+          )}
+        </>
       )}
     </Card>
   )
