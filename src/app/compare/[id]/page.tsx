@@ -251,173 +251,25 @@ export default function ComparePage() {
 
 
   return (
-    <main className="min-h-screen bg-background p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <main className="min-h-screen bg-background p-2 md:p-4">
+      <div className="w-full max-w-[98vw] mx-auto space-y-4">
         <div className="flex items-center justify-between">
           <Link href="/">
-            <Button variant="outline">← Back</Button>
+            <Button variant="outline" size="sm">← Back</Button>
           </Link>
         </div>
 
-
         <div>
-          <h1 className="text-3xl font-bold mb-2">Compare Videos - {exercise.name}</h1>
-          <p className="text-muted-foreground">Upload a video or record using your webcam to compare against the reference exercise</p>
+          <h1 className="text-2xl font-bold mb-1">Compare Videos - {exercise.name}</h1>
         </div>
 
-
-        {/* Input Method Selection */}
-        {!inputMethod && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card
-              className="p-6 cursor-pointer hover:border-primary transition-colors"
-              onClick={() => setInputMethod('upload')}
-            >
-              <div className="text-center space-y-3">
-                <Upload className="w-12 h-12 mx-auto text-primary" />
-                <h3 className="text-lg font-semibold">Upload Video</h3>
-                <p className="text-sm text-muted-foreground">
-                  Upload a pre-recorded video file from your device
-                </p>
-              </div>
-            </Card>
-            <Card
-              className="p-6 cursor-pointer hover:border-primary transition-colors"
-              onClick={() => setInputMethod('webcam')}
-            >
-              <div className="text-center space-y-3">
-                <Video className="w-12 h-12 mx-auto text-primary" />
-                <h3 className="text-lg font-semibold">Record with Webcam</h3>
-                <p className="text-sm text-muted-foreground">
-                  Record a new video using your webcam with real-time pose detection
-                </p>
-              </div>
-            </Card>
-          </div>
-        )}
-
-
-        {/* Video Upload Section */}
-        {inputMethod === 'upload' && (
-          <Card className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold">Upload Video for Comparison</h2>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setInputMethod(null)
-                  setUploadedFile(null)
-                  setUploadedVideoUrl(null)
-                  setComparisonResult(null)
-                }}
-              >
-                Change Method
-              </Button>
-            </div>
-            <div className="flex items-center gap-4">
-              <Input
-                ref={fileInputRef}
-                type="file"
-                accept="video/*"
-                onChange={handleFileUpload}
-                className="flex-1"
-              />
-              {uploadedFile && (
-                <Button
-                  onClick={compareVideos}
-                  disabled={isAnalyzing}
-                  className="gap-2"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Compare Videos
-                    </>
-                  )}
-                </Button>
-              )}
-            </div>
-            {error && (
-              <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-md">
-                <p className="text-sm text-destructive">{error}</p>
-              </div>
-            )}
-          </Card>
-        )}
-
-
-        {/* Webcam Recording Section */}
-        {inputMethod === 'webcam' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Record Using Webcam</h2>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setInputMethod(null)
-                  setUploadedFile(null)
-                  setUploadedVideoUrl(null)
-                  setComparisonResult(null)
-                }}
-              >
-                Change Method
-              </Button>
-            </div>
-            <ComparisonRecorder 
-              onVideoRecorded={handleVideoRecorded}
-              anglesOfInterest={getExerciseConfig(exercise?.type)?.anglesOfInterest || ["right_knee"]}
-              exerciseName={exercise?.name}
-              exerciseType={exercise?.type}
-              enableTestMode={true}
-            />
-            {uploadedFile && (
-              <Card className="p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Video recorded successfully!</p>
-                  <Button
-                    onClick={compareVideos}
-                    disabled={isAnalyzing}
-                    className="gap-2"
-                  >
-                    {isAnalyzing ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Analyzing...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-4 h-4" />
-                        Compare Videos
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </Card>
-            )}
-            {error && (
-              <div className="p-3 bg-destructive/10 border border-destructive rounded-md">
-                <p className="text-sm text-destructive">{error}</p>
-              </div>
-            )}
-          </div>
-        )}
-
-
-        {/* Video Display Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Reference Video */}
-          <div className="space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Left Column: Reference Video */}
+          <div className="space-y-2">
             <h2 className="text-lg font-semibold">Reference Video</h2>
-            <Card className="p-4 bg-muted aspect-video flex items-center justify-center rounded-lg overflow-hidden">
+            <Card className="overflow-hidden bg-black border-0">
               {videoError && (
-                <div className="text-sm text-destructive p-4 text-center">
+                <div className="text-sm text-destructive p-4 text-center bg-muted">
                   <p className="font-semibold mb-2">Video Load Error:</p>
                   <p>{videoError}</p>
                   <p className="text-xs mt-2 opacity-70">URL: {exercise.videoUrl}</p>
@@ -426,10 +278,14 @@ export default function ComparePage() {
               <video
                 ref={videoRef}
                 controls
-                className="w-full h-full object-contain rounded"
+                loop
+                muted
+                autoPlay
+                playsInline
+                className="w-full h-auto block"
                 crossOrigin="anonymous"
                 onError={(e) => {
-                  console.error("❌ Video load error:", e)
+                  console.error("Video load error:", e)
                   console.error("Video URL:", exercise.videoUrl)
                   console.error("Error event:", e.currentTarget.error)
                   setVideoError(
@@ -450,30 +306,173 @@ export default function ComparePage() {
             </Card>
           </div>
 
-
-          {/* Uploaded Video */}
-          <div className="space-y-3">
-            <h2 className="text-lg font-semibold">Your Video</h2>
-            <Card className="p-4 bg-muted aspect-video flex items-center justify-center rounded-lg overflow-hidden">
-              {uploadedVideoUrl ? (
-                <video
-                  controls
-                  className="w-full h-full object-contain rounded"
+          {/* Right Column: User Input / Video */}
+          <div className="space-y-2">
+            {/* Input Method Selection */}
+            {!inputMethod && (
+              <div className="grid grid-cols-1 gap-4">
+                <Card
+                  className="p-6 cursor-pointer hover:border-primary transition-colors"
+                  onClick={() => setInputMethod('upload')}
                 >
-                  <source src={uploadedVideoUrl} type="video/webm" />
-                  <source src={uploadedVideoUrl} type="video/mp4" />
-                  Your browser does not support the video tag.
-                </video>
-              ) : (
-                <div className="text-center text-muted-foreground">
-                  <Upload className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p>Upload a video to compare</p>
+                  <div className="flex items-center gap-4">
+                    <Upload className="w-8 h-8 text-primary" />
+                    <div>
+                      <h3 className="text-lg font-semibold">Upload Video</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Upload a pre-recorded video file
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+                <Card
+                  className="p-6 cursor-pointer hover:border-primary transition-colors"
+                  onClick={() => setInputMethod('webcam')}
+                >
+                  <div className="flex items-center gap-4">
+                    <Video className="w-8 h-8 text-primary" />
+                    <div>
+                      <h3 className="text-lg font-semibold">Record with Webcam</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Record using your webcam with real-time detection
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* Video Upload Section */}
+            {inputMethod === 'upload' && (
+              <div className="space-y-4">
+                <Card className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold">Upload Video</h2>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setInputMethod(null)
+                        setUploadedFile(null)
+                        setUploadedVideoUrl(null)
+                        setComparisonResult(null)
+                      }}
+                    >
+                      Change Method
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="video/*"
+                      onChange={handleFileUpload}
+                      className="flex-1"
+                    />
+                    {uploadedFile && (
+                      <Button
+                        onClick={compareVideos}
+                        disabled={isAnalyzing}
+                        className="gap-2"
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Analyzing...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-4 h-4" />
+                            Compare
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                  {error && (
+                    <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-md">
+                      <p className="text-sm text-destructive">{error}</p>
+                    </div>
+                  )}
+                </Card>
+
+                {uploadedVideoUrl && (
+                  <div className="space-y-3">
+                    <h2 className="text-lg font-semibold">Your Video</h2>
+                    <Card className="p-4 bg-muted aspect-video flex items-center justify-center rounded-lg overflow-hidden">
+                      <video
+                        controls
+                        loop
+                        className="w-full h-full object-contain rounded"
+                      >
+                        <source src={uploadedVideoUrl} type="video/webm" />
+                        <source src={uploadedVideoUrl} type="video/mp4" />
+                        Your browser does not support the video tag.
+                      </video>
+                    </Card>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Webcam Recording Section */}
+            {inputMethod === 'webcam' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-semibold">Record Using Webcam</h2>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setInputMethod(null)
+                      setUploadedFile(null)
+                      setUploadedVideoUrl(null)
+                      setComparisonResult(null)
+                    }}
+                  >
+                    Change Method
+                  </Button>
                 </div>
-              )}
-            </Card>
+                <ComparisonRecorder 
+                  onVideoRecorded={handleVideoRecorded}
+                  anglesOfInterest={getExerciseConfig(exercise?.type)?.anglesOfInterest || ["right_knee"]}
+                  exerciseName={exercise?.name}
+                  exerciseType={exercise?.type}
+                  enableTestMode={true}
+                />
+                {uploadedFile && (
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">Video recorded successfully!</p>
+                      <Button
+                        onClick={compareVideos}
+                        disabled={isAnalyzing}
+                        className="gap-2"
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Analyzing...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-4 h-4" />
+                            Compare Videos
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </Card>
+                )}
+                {error && (
+                  <div className="p-3 bg-destructive/10 border border-destructive rounded-md">
+                    <p className="text-sm text-destructive">{error}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
-
 
         {/* Comparison Results */}
         {comparisonResult && (

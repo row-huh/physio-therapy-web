@@ -381,7 +381,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }
 
 
-  // this just feels wrong but i cant yet prove why - maybe it's recalculation of the same state thing that is being stored in exercise templates 
   const updateRepCount = (state: string, timestamp: number) => {
     if (!state) return
     
@@ -391,7 +390,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
       if (timeSinceLastChange < MIN_STATE_DURATION && lastStateRef.current !== "") {
         return
       }
-      // Sequence: trough (flexed) -> peak (extended) -> trough counts one rep
       if (state === "extended" && lastStateRef.current === "flexed") {
         hasVisitedPeakRef.current = true
       }
@@ -593,7 +591,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         const rawAngles = calculateAllAngles(landmarks)
         const smoothedAngles = smoothAngles(rawAngles, ts / 1000)
         
-        // Debug logging for face exercises
         if (anglesOfInterest && anglesOfInterest[0] === "head_yaw" && frameCount % 30 === 0) {
           console.log('🔍 Head yaw:', smoothedAngles.head_yaw?.toFixed(1), 
                       'Min:', minAngleSeenRef.current.toFixed(1), 
@@ -607,8 +604,32 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           timestamp: ts / 1000,
           angles: smoothedAngles
         })
+        
         if (anglesOfInterest && anglesOfInterest.length > 0) {
-          const primary = anglesOfInterest[0]
+          let primary = anglesOfInterest[0]
+          
+
+          if (exerciseType === 'knee-extension' && 
+              anglesOfInterest.includes('left_knee') && 
+              anglesOfInterest.includes('right_knee')) {
+            
+            const history = angleHistoryRef.current
+            if (history.length > 15) {
+              const recent = history.slice(-15)
+              const getRange = (angle: string) => {
+                const values = recent.map(h => h.angles[angle] || 0)
+                return Math.max(...values) - Math.min(...values)
+              }
+              
+              const leftRange = getRange('left_knee')
+              const rightRange = getRange('right_knee')
+              
+              if (rightRange > leftRange && rightRange > 5) {
+                primary = 'right_knee'
+              }
+            }
+          }
+
           const val = smoothedAngles[primary]
           if (val !== undefined) {
             primaryAngleHistoryRef.current.push({ t: ts / 1000, value: val })
@@ -626,7 +647,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
           stateLabel = mapped?.name || ""
           if (stateLabel) setTemplateState(stateLabel)
-          const primary = anglesOfInterest[0]
+          const primary = getDriverAngle(learnedTemplateRef.current, anglesOfInterest)
           const sortable = learnedTemplateRef.current.states.filter(s => s.angleRanges[primary])
           if (mapped && sortable.length >= 2) {
             const sorted = [...sortable].sort((a, b) => a.angleRanges[primary].mean - b.angleRanges[primary].mean)
@@ -709,7 +730,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         })
         
         drawAngleAnnotations(ctx, landmarks, smoothedAngles)
-        drawLiveMetrics(ctx)
+        // drawLiveMetrics(ctx)
       }
 
       rafRef.current = requestAnimationFrame(render)
@@ -771,71 +792,113 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }
 
 
-  const repSignalStateRef = useRef<{ lastPeak?: number; lastTrough?: number; lastDirection?: 'up' | 'down' | null; lastChangeT?: number }>({ lastDirection: null, lastChangeT: 0 })
+  const repSignalStatesRef = useRef<{[key: string]: { 
+    lastPeak?: number; 
+    lastTrough?: number; 
+    lastDirection?: 'up' | 'down' | null; 
+    lastChangeT?: number 
+  }}>({})
+  const lastRepTimeRef = useRef<number>(0)
+
   const updateRepCountFromSignal = () => {
-    const series = primaryAngleHistoryRef.current
-    if (series.length < 8) return
-    const recent = series.slice(-30)
-    const n = recent.length
-    const deriv: number[] = []
-    for (let i = 1; i < n; i++) {
-      const dt = Math.max(0.016, recent[i].t - recent[i - 1].t)
-      deriv.push((recent[i].value - recent[i - 1].value) / dt)
+    let trackingAngles: string[] = []
+    if (exerciseType === 'knee-extension') {
+      trackingAngles = ['left_knee', 'right_knee']
+    } else if (exerciseType === 'scap-wall-slides') {
+      trackingAngles = ['left_shoulder', 'right_shoulder']
+    } else if (anglesOfInterest && anglesOfInterest.length > 0) {
+      trackingAngles = [anglesOfInterest[0]]
     }
-    const alpha = 0.3
-    for (let i = 1; i < deriv.length; i++) {
-      deriv[i] = alpha * deriv[i] + (1 - alpha) * deriv[i - 1]
-    }
-    const lastIdx = deriv.length - 1
-    const prev = deriv[lastIdx - 1]
-    const curr = deriv[lastIdx]
-    const nowT = recent[recent.length - 1].t
-  const HYST_DERIV = 4 
-    const MIN_INTERVAL = 0.25 
-    const state = repSignalStateRef.current
-  const dir: 'up' | 'down' | null = curr > HYST_DERIV ? 'up' : curr < -HYST_DERIV ? 'down' : (state.lastDirection ?? null)
-    if (!dir) return
-    if (dir !== state.lastDirection) {
-      if (nowT - (state.lastChangeT || 0) < MIN_INTERVAL) {
-        state.lastDirection = dir
-        return
-      }
-      if (state.lastDirection === 'up' && dir === 'down') {
-        state.lastPeak = recent[recent.length - 1].value
-      }
-      if (state.lastDirection === 'down' && dir === 'up') {
-        state.lastTrough = recent[recent.length - 1].value
-        if (state.lastPeak !== undefined && state.lastTrough !== undefined) {
-          const rom = Math.abs(state.lastPeak - state.lastTrough)
+    
+    trackingAngles = trackingAngles.filter(a => anglesOfInterest?.includes(a))
+    
+    if (trackingAngles.length === 0) return
 
-          const windowVals = primaryAngleHistoryRef.current.map(p => p.value)
-          const observedRange = windowVals.length > 0 ? (Math.max(...windowVals) - Math.min(...windowVals)) : 0
-          const MIN_ROM = Math.max(20, observedRange * 0.35) 
+    const history = angleHistoryRef.current
+    if (history.length < 8) return
+    
+    trackingAngles.forEach(angleName => {
+      if (!repSignalStatesRef.current[angleName]) {
+        repSignalStatesRef.current[angleName] = { lastDirection: null, lastChangeT: 0 }
+      }
+      const state = repSignalStatesRef.current[angleName]
+      
+      const recent = history.slice(-30).map(h => ({ t: h.timestamp, value: h.angles[angleName] }))
+      const validRecent = recent.filter(r => r.value !== undefined) as {t: number, value: number}[]
+      
+      if (validRecent.length < 5) return
+      
+      const n = validRecent.length
+      const deriv: number[] = []
+      for (let i = 1; i < n; i++) {
+        const dt = Math.max(0.016, validRecent[i].t - validRecent[i - 1].t)
+        deriv.push((validRecent[i].value - validRecent[i - 1].value) / dt)
+      }
+      
+      const alpha = 0.3
+      for (let i = 1; i < deriv.length; i++) {
+        deriv[i] = alpha * deriv[i] + (1 - alpha) * deriv[i - 1]
+      }
+      
+      const lastIdx = deriv.length - 1
+      const curr = deriv[lastIdx]
+      const nowT = validRecent[validRecent.length - 1].t
+      
+      const HYST_DERIV = 2 
+      const MIN_INTERVAL = 0.25 
+      
+      const dir: 'up' | 'down' | null = curr > HYST_DERIV ? 'up' : curr < -HYST_DERIV ? 'down' : (state.lastDirection ?? null)
+      
+      if (!dir) return
+      
+      if (dir !== state.lastDirection) {
+        if (nowT - (state.lastChangeT || 0) < MIN_INTERVAL) {
+          state.lastDirection = dir
+          return
+        }
+        
+        if (state.lastDirection === 'up' && dir === 'down') {
+          state.lastPeak = validRecent[validRecent.length - 1].value
+        }
+        
+        if (state.lastDirection === 'down' && dir === 'up') {
+          state.lastTrough = validRecent[validRecent.length - 1].value
           
-          let PEAK_MIN = 148
-          let TROUGH_MAX = 108
-          
-          if (exerciseType === 'scap-wall-slides') {
-             PEAK_MIN = 140 
-             TROUGH_MAX = 120 
-          } else if (exerciseType === 'knee-extension') {
-             PEAK_MIN = 150 
-             TROUGH_MAX = 100 
-          }
-
-          const peakOK = state.lastPeak >= PEAK_MIN
-          const troughOK = state.lastTrough <= TROUGH_MAX
-          console.log(`[REP DEBUG] ROM=${rom.toFixed(1)} peak=${state.lastPeak?.toFixed(1)} trough=${state.lastTrough?.toFixed(1)} peakOK=${peakOK} troughOK=${troughOK}`)
-          if (rom >= MIN_ROM && peakOK && troughOK) {
-            console.log(`REP COUNTED! Total: ${repCount + 1}`)
-            setRepCount(prev => prev + 1)
-            state.lastPeak = undefined
+          if (state.lastPeak !== undefined && state.lastTrough !== undefined) {
+            const rom = Math.abs(state.lastPeak - state.lastTrough)
+            
+            const windowVals = validRecent.map(p => p.value)
+            const observedRange = windowVals.length > 0 ? (Math.max(...windowVals) - Math.min(...windowVals)) : 0
+            const MIN_ROM = Math.max(15, observedRange * 0.3)
+            
+            let PEAK_MIN = 145
+            let TROUGH_MAX = 110
+            
+            if (exerciseType === 'scap-wall-slides') {
+               PEAK_MIN = 135 
+               TROUGH_MAX = 130 
+            } else if (exerciseType === 'knee-extension') {
+               PEAK_MIN = 135 
+               TROUGH_MAX = 125 
+            }
+  
+            const peakOK = state.lastPeak >= PEAK_MIN
+            const troughOK = state.lastTrough <= TROUGH_MAX
+            
+            if (rom >= MIN_ROM && peakOK && troughOK) {
+              if (nowT - lastRepTimeRef.current > 1.0) {
+                 console.log(`REP COUNTED on ${angleName}!`)
+                 setRepCount(prev => prev + 1)
+                 lastRepTimeRef.current = nowT
+              }
+              state.lastPeak = undefined
+            }
           }
         }
+        state.lastDirection = dir
+        state.lastChangeT = nowT
       }
-      state.lastDirection = dir
-      state.lastChangeT = nowT
-    }
+    })
   }
 
   const drawAngleAnnotations = (
@@ -933,7 +996,104 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
 
   return (
     <Card className="p-6 space-y-4">
-      <div className="flex gap-3">
+
+
+      <div className="relative rounded-lg overflow-hidden bg-black">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="w-full h-auto block"
+        />
+        <canvas
+          ref={canvasRef}
+          className="absolute top-0 left-0 w-full h-full"
+        />
+        
+        {isStreaming && (
+          <>
+
+            <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-3 py-2 border border-green-500">
+              <div className="text-xs text-green-400 font-semibold mb-0.5">REPS</div>
+              <div className="text-3xl font-bold text-white">{repCount}</div>
+              {!hasLearnedThresholdsRef.current && angleHistoryRef.current.length < 60 && (
+                <div className="text-xs text-yellow-400 mt-1">Learning...</div>
+              )}
+            </div>
+            
+
+            {(currentState || templateState) && (
+              <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg px-3 py-2 border border-blue-500">
+                <div className="text-xs text-blue-400 font-semibold mb-0.5">STATE</div>
+                <div className="text-lg font-bold text-white capitalize">{templateState || currentState}</div>
+              </div>
+            )}
+            
+            {Object.keys(currentAngles).length > 0 && (
+              <div className="absolute bottom-4 left-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg p-2 border border-purple-500/50">
+                <div className="text-[10px] text-purple-400 font-semibold mb-0.5">LIVE ANGLES</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {anglesOfInterest && anglesOfInterest.length > 0 ? (
+                    anglesOfInterest.map(angleName => {
+                      const angle = currentAngles[angleName]
+                      if (angle === undefined) return null
+                      
+                      return (
+                        <div key={angleName} className="flex flex-col">
+                          <span className="text-[10px] text-gray-400 capitalize">
+                            {angleName.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-sm font-bold text-white">
+                            {Math.round(angle)}°
+                          </span>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    Object.entries(currentAngles)
+                      .filter(([name]) => !name.includes('segment'))
+                      .slice(0, 6)
+                      .map(([angleName, angle]) => (
+                        <div key={angleName} className="flex flex-col">
+                          <span className="text-[10px] text-gray-400 capitalize">
+                            {angleName.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-sm font-bold text-white">
+                            {Math.round(angle)}°
+                          </span>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {learnedTemplateRef.current && errorFeedback && (
+              <div className={`absolute bottom-24 left-1/2 transform -translate-x-1/2 bg-black/80 backdrop-blur-sm rounded-lg px-4 py-2 border ${
+                currentRepError && currentRepError.overallError < 10 
+                  ? 'border-green-500 text-green-400' 
+                  : currentRepError && currentRepError.overallError < 20
+                  ? 'border-yellow-500 text-yellow-400'
+                  : 'border-red-500 text-red-400'
+              }`}>
+                <div className="text-center">
+                  <h4 className="font-bold text-xl mb-0.5 whitespace-nowrap">
+                    {errorFeedback}
+                  </h4>
+                  {currentRepError && (
+                    <div className="text-sm text-white/90">
+                      Error: {currentRepError.overallError.toFixed(1)}°
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="flex gap-3 mt-4">
         <Button onClick={openWebcam} disabled={isStreaming || isLoading} className="gap-2">
           {isLoading ? "Opening…" : "Open Webcam"}
         </Button>
@@ -973,7 +1133,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
       </div>
 
       {testMode && testVideoFile && (
-        <div className="bg-yellow-50 dark:bg-yellow-950 border-2 border-yellow-500 rounded-lg p-3">
+        <div className="mt-4 bg-yellow-50 dark:bg-yellow-950 border-2 border-yellow-500 rounded-lg p-3">
           <div className="flex items-center gap-2">
             <div className="flex-1">
               <div className="font-semibold text-yellow-900 dark:text-yellow-100">
@@ -986,87 +1146,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           </div>
         </div>
       )}
-
-      <div className="relative bg-muted rounded-lg overflow-hidden flex items-center justify-center">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="w-full h-auto"
-        />
-        <canvas
-          ref={canvasRef}
-          className="absolute top-0 left-0 w-full h-full"
-        />
-        
-        {isStreaming && (
-          <>
-
-            <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-4 border-2 border-green-500">
-              <div className="text-sm text-green-400 font-semibold mb-1">REPS</div>
-              <div className="text-5xl font-bold text-white">{repCount}</div>
-              {!hasLearnedThresholdsRef.current && angleHistoryRef.current.length < 60 && (
-                <div className="text-xs text-yellow-400 mt-1">Learning...</div>
-              )}
-            </div>
-            
-
-            {(currentState || templateState) && (
-              <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-3 border-2 border-blue-500">
-                <div className="text-sm text-blue-400 font-semibold mb-1">STATE</div>
-                <div className="text-2xl font-bold text-white capitalize">{templateState || currentState}</div>
-              </div>
-            )}
-
-            {formScore !== null && (
-              <div className="absolute top-28 right-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-3 border-2 border-purple-500">
-                <div className="text-sm text-purple-400 font-semibold mb-1">FORM SCORE{templateName ? ` · ${templateName}` : ""}</div>
-                <div className="text-2xl font-bold text-white">{formScore}%</div>
-              </div>
-            )}
-            
-            {Object.keys(currentAngles).length > 0 && (
-              <div className="absolute bottom-4 left-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg p-4 border-2 border-purple-500">
-                <div className="text-sm text-purple-400 font-semibold mb-2">LIVE ANGLES</div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {anglesOfInterest && anglesOfInterest.length > 0 ? (
-                    anglesOfInterest.map(angleName => {
-                      const angle = currentAngles[angleName]
-                      if (angle === undefined) return null
-                      
-                      return (
-                        <div key={angleName} className="flex flex-col">
-                          <span className="text-xs text-gray-400 capitalize">
-                            {angleName.replace(/_/g, ' ')}
-                          </span>
-                          <span className="text-xl font-bold text-white">
-                            {Math.round(angle)}°
-                          </span>
-                        </div>
-                      )
-                    })
-                  ) : (
-                    Object.entries(currentAngles)
-                      .filter(([name]) => !name.includes('segment'))
-                      .slice(0, 6)
-                      .map(([angleName, angle]) => (
-                        <div key={angleName} className="flex flex-col">
-                          <span className="text-xs text-gray-400 capitalize">
-                            {angleName.replace(/_/g, ' ')}
-                          </span>
-                          <span className="text-xl font-bold text-white">
-                            {Math.round(angle)}°
-                          </span>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
       
       {isStreaming && (
         <>
@@ -1088,34 +1167,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
             </ul>
           </div>
 
-          {learnedTemplateRef.current && errorFeedback && (
-            <div className={`border-2 rounded-lg p-4 ${
-              currentRepError && currentRepError.overallError < 10 
-                ? 'bg-green-50 dark:bg-green-950 border-green-500' 
-                : currentRepError && currentRepError.overallError < 20
-                ? 'bg-yellow-50 dark:bg-yellow-950 border-yellow-500'
-                : 'bg-red-50 dark:bg-red-950 border-red-500'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold text-lg mb-1">
-                    {errorFeedback}
-                  </h4>
-                  {currentRepError && (
-                    <div className="text-sm opacity-80">
-                      Current error: {currentRepError.overallError.toFixed(1)}° from template
-                    </div>
-                  )}
-                </div>
-                {currentRepError && (
-                  <div className="text-4xl font-bold">
-                    {currentRepError.formScore.toFixed(0)}%
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           {learnedTemplateRef.current && repErrors.length > 0 && (
             <RepErrorGraph 
               repErrors={repErrors} 
@@ -1130,12 +1181,31 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   )
 }
 
+function getDriverAngle(
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  anglesOfInterest: string[]
+): string {
+  let bestAngle = anglesOfInterest[0]
+  let maxRange = -1
+
+  for (const angle of anglesOfInterest) {
+    const means = template.states.map(s => s.angleRanges[angle]?.mean).filter(m => m !== undefined)
+    if (means.length < 2) continue
+    const range = Math.max(...means) - Math.min(...means)
+    if (range > maxRange) {
+      maxRange = range
+      bestAngle = angle
+    }
+  }
+  return bestAngle
+}
+
 function computeFormScore(
   angles: JointAngleData,
   template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
   anglesOfInterest: string[]
 ): number {
-  const primary = anglesOfInterest[0]
+  const primary = getDriverAngle(template, anglesOfInterest)
   const cur = angles[primary]
   if (cur === undefined) return 0
   const candidates = template.states.filter(s => s.angleRanges[primary])
@@ -1166,7 +1236,7 @@ function mapToTemplateState(
   template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
   anglesOfInterest: string[]
 ): { id: string; name: string } | null {
-  const primary = anglesOfInterest[0]
+  const primary = getDriverAngle(template, anglesOfInterest)
   const cur = angles[primary]
   if (cur === undefined) return null
   const candidates = template.states.filter(s => s.angleRanges[primary])
