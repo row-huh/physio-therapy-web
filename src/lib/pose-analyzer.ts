@@ -619,39 +619,6 @@ function calculateJointAngles(
     }
   }
   
-  // === FACE ANGLES (using pose landmarks 0-10) ===
-  // Head yaw (left/right rotation)
-  if (shouldTrack("head_yaw")) {
-    try {
-      const nose = getLandmark(POSE_LANDMARKS.NOSE)
-      const leftEye = getLandmark(POSE_LANDMARKS.LEFT_EYE_OUTER)
-      const rightEye = getLandmark(POSE_LANDMARKS.RIGHT_EYE_OUTER)
-      
-      const leftDist = Math.sqrt(
-        Math.pow(nose[0] - leftEye[0], 2) + Math.pow(nose[1] - leftEye[1], 2)
-      )
-      const rightDist = Math.sqrt(
-        Math.pow(nose[0] - rightEye[0], 2) + Math.pow(nose[1] - rightEye[1], 2)
-      )
-      const ratio = leftDist / rightDist
-      const yaw = Math.atan((ratio - 1) / 0.5) * (180 / Math.PI)
-      angles.push({ joint: "head_yaw", angle: yaw })
-    } catch (e) {
-      console.warn("Could not calculate head yaw")
-    }
-  }
-  
-  // Nose horizontal position
-  if (shouldTrack("nose_horizontal")) {
-    try {
-      const nose = getLandmark(POSE_LANDMARKS.NOSE)
-      const noseX = (nose[0] * 2 - 1 + 1) * 90
-      angles.push({ joint: "nose_horizontal", angle: noseX })
-    } catch (e) {
-      console.warn("Could not calculate nose horizontal")
-    }
-  }
-  
   return angles
 }
 
