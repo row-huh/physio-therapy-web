@@ -197,6 +197,7 @@ function isHoldState(
 /**
  * Count repetitions by detecting complete exercise cycles
  * A rep is a complete cycle through the primary states
+ * For bilateral exercises (both arms/legs), uses average of both sides
  */
 function countRepetitions(
   states: DetectedState[],
@@ -207,27 +208,80 @@ function countRepetitions(
   
   // Identify the starting/ending state (typically the most flexed or extended position)
   // This is usually the state with the smallest or largest mean angle
-  const primaryAngle = angleNames[0] // Use first angle as primary
+  
+  // For bilateral exercises, check if we have left/right pairs
+  const hasBilateral = angleNames.some(name => name.includes('left')) && 
+                       angleNames.some(name => name.includes('right'))
+  
+  let primaryAngle = angleNames[0] // Default to first angle
+  
+  // If bilateral, use the average of left/right for determining states
+  if (hasBilateral) {
+    // Find the primary joint type (e.g., 'shoulder', 'elbow', 'knee')
+    const leftAngles = angleNames.filter(name => name.includes('left'))
+    const rightAngles = angleNames.filter(name => name.includes('right'))
+    
+    // For bilateral, we'll compute average angles for state determination
+    // But use the first available angle for now as primary
+    const jointTypes = leftAngles.map(name => name.replace('left_', ''))
+    console.log(`🔄 Bilateral exercise detected with joint types: ${jointTypes.join(', ')}`)
+    primaryAngle = leftAngles[0] // Use left side as primary reference
+  }
   
   // Find states sorted by angle
   const statesByAngle = [...states]
     .filter(s => s.angleRanges[primaryAngle])
-    .sort((a, b) => 
-      a.angleRanges[primaryAngle].mean - b.angleRanges[primaryAngle].mean
-    )
+    .sort((a, b) => {
+      // For bilateral exercises, sort by average of both sides
+      if (hasBilateral) {
+        const rightAngle = primaryAngle.replace('left', 'right')
+        const avgA = a.angleRanges[rightAngle] 
+          ? (a.angleRanges[primaryAngle].mean + a.angleRanges[rightAngle].mean) / 2
+          : a.angleRanges[primaryAngle].mean
+        const avgB = b.angleRanges[rightAngle]
+          ? (b.angleRanges[primaryAngle].mean + b.angleRanges[rightAngle].mean) / 2
+          : b.angleRanges[primaryAngle].mean
+        return avgA - avgB
+      }
+      return a.angleRanges[primaryAngle].mean - b.angleRanges[primaryAngle].mean
+    })
   
   if (statesByAngle.length === 0) {
     console.warn("⚠️ No states with angle data found")
     return 1
   }
   
-  // The start state is typically the most flexed (smallest angle) position
-  const startState = statesByAngle[0]
-  // The peak state is the most extended (largest angle) position  
-  const peakState = statesByAngle[statesByAngle.length - 1]
+  // Determine the actual start state from the sequence (first state)
+  // This handles exercises that start at max extension (like squats) vs min extension (like curls)
+  const firstStateId = stateSequence[0]
+  const actualStartState = states.find(s => s.id === firstStateId) || statesByAngle[0]
   
-  console.log(`🎯 Start state: ${startState.name} (${Math.round(startState.angleRanges[primaryAngle].mean)}°)`)
-  console.log(`🎯 Peak state: ${peakState.name} (${Math.round(peakState.angleRanges[primaryAngle].mean)}°)`)
+  // The peak state is the one furthest from the start state (in terms of angle)
+  const startAngleMean = hasBilateral 
+    ? (actualStartState.angleRanges[primaryAngle].mean + (actualStartState.angleRanges[primaryAngle.replace('left', 'right')]?.mean || actualStartState.angleRanges[primaryAngle].mean)) / 2
+    : actualStartState.angleRanges[primaryAngle].mean
+
+  const peakState = statesByAngle.reduce((furthest, state) => {
+    const currentMean = hasBilateral
+      ? (state.angleRanges[primaryAngle].mean + (state.angleRanges[primaryAngle.replace('left', 'right')]?.mean || state.angleRanges[primaryAngle].mean)) / 2
+      : state.angleRanges[primaryAngle].mean
+    
+    const furthestMean = hasBilateral
+      ? (furthest.angleRanges[primaryAngle].mean + (furthest.angleRanges[primaryAngle.replace('left', 'right')]?.mean || furthest.angleRanges[primaryAngle].mean)) / 2
+      : furthest.angleRanges[primaryAngle].mean
+      
+    return Math.abs(currentMean - startAngleMean) > Math.abs(furthestMean - startAngleMean)
+      ? state
+      : furthest
+  }, statesByAngle[0])
+  
+  const startAngleDisplay = Math.round(startAngleMean)
+  const peakAngleDisplay = Math.round(hasBilateral 
+    ? (peakState.angleRanges[primaryAngle].mean + (peakState.angleRanges[primaryAngle.replace('left', 'right')]?.mean || peakState.angleRanges[primaryAngle].mean)) / 2
+    : peakState.angleRanges[primaryAngle].mean)
+  
+  console.log(`🎯 Start state: ${actualStartState.name} (${startAngleDisplay}°)`)
+  console.log(`🎯 Peak state: ${peakState.name} (${peakAngleDisplay}°)`)
   
   // Count complete cycles: start → peak → start (or back to start)
   // A rep is counted when we return to the start state after visiting the peak
@@ -248,7 +302,7 @@ function countRepetitions(
     }
     
     // Check if we returned to start state after visiting peak
-    if (currentState === startState.id && hasVisitedPeak) {
+    if (currentState === actualStartState.id && hasVisitedPeak) {
       repCount++
       hasVisitedPeak = false
       console.log(`  ✅ Rep ${repCount} completed at position ${i}`)
@@ -266,7 +320,7 @@ function countRepetitions(
   // Fallback: if cycle counting failed, use occurrence counting for the start state
   if (repCount === 0) {
     console.warn("⚠️ Cycle counting failed, using fallback method")
-    repCount = Math.max(1, startState.occurrences.length)
+    repCount = Math.max(1, actualStartState.occurrences.length)
   }
   
   return repCount
