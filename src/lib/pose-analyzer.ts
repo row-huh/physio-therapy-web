@@ -24,6 +24,20 @@ export interface PoseAnalysisResult {
 }
 
 /**
+ * Main entry point for video analysis - uses PoseLandmarker for all exercises
+ * @param videoBlob The video blob to analyze
+ * @param anglesOfInterest Optional array of specific angles to track
+ * @param exerciseInfo Optional exercise information for state learning
+ */
+export async function analyzeVideoForPose(
+  videoBlob: Blob,
+  anglesOfInterest?: string[],
+  exerciseInfo?: { name: string; type: string }
+): Promise<PoseAnalysisResult> {
+  return analyzeVideoForPoseBody(videoBlob, anglesOfInterest, exerciseInfo)
+}
+
+/**
  * One Euro Filter for temporal smoothing of landmarks
  * Reduces jitter while maintaining responsiveness to real movement
  */
@@ -82,127 +96,12 @@ class OneEuroFilter {
 }
 
 /**
- * Landmark smoother using One Euro Filters
- */
-class LandmarkSmoother {
-  private filters: Map<string, { x: OneEuroFilter; y: OneEuroFilter; z: OneEuroFilter }> = new Map()
-  
-  constructor(
-    private min_cutoff: number = 1.0,
-    private beta: number = 0.007
-  ) {}
-  
-  smoothLandmarks(landmarks: any[], timestamp: number): any[] {
-    return landmarks.map((landmark, index) => {
-      const key = `landmark_${index}`
-      
-      if (!this.filters.has(key)) {
-        this.filters.set(key, {
-          x: new OneEuroFilter(this.min_cutoff, this.beta),
-          y: new OneEuroFilter(this.min_cutoff, this.beta),
-          z: new OneEuroFilter(this.min_cutoff, this.beta),
-        })
-      }
-      
-      const filter = this.filters.get(key)!
-      
-      return {
-        x: filter.x.filter(landmark.x, timestamp),
-        y: filter.y.filter(landmark.y, timestamp),
-        z: filter.z ? filter.z.filter(landmark.z || 0, timestamp) : landmark.z,
-        visibility: landmark.visibility,
-      }
-    })
-  }
-  
-  reset() {
-    this.filters.clear()
-  }
-}
-
-// MediaPipe Pose landmark indices
-const POSE_LANDMARKS = {
-  LEFT_SHOULDER: 11,
-  RIGHT_SHOULDER: 12,
-  LEFT_ELBOW: 13,
-  RIGHT_ELBOW: 14,
-  LEFT_WRIST: 15,
-  RIGHT_WRIST: 16,
-  LEFT_HIP: 23,
-  RIGHT_HIP: 24,
-  LEFT_KNEE: 25,
-  RIGHT_KNEE: 26,
-  LEFT_ANKLE: 27,
-  RIGHT_ANKLE: 28,
-  LEFT_HEEL: 29,
-  RIGHT_HEEL: 30,
-  LEFT_FOOT_INDEX: 31,
-  RIGHT_FOOT_INDEX: 32,
-}
-
-/**
- * Calculate angle between three points (in degrees)
- * This is the interior angle at point b, formed by vectors b->a and b->c
- * @param a First point [x, y]
- * @param b Middle point (vertex) [x, y]
- * @param c Third point [x, y]
- * @returns Angle in degrees (0-180)
- */
-function calculateAngle(a: number[], b: number[], c: number[]): number {
-  const radians =
-    Math.atan2(c[1] - b[1], c[0] - b[0]) - Math.atan2(a[1] - b[1], a[0] - b[0])
-  let angle = Math.abs((radians * 180.0) / Math.PI)
-  
-  if (angle > 180.0) {
-    angle = 360.0 - angle
-  }
-  
-  return angle
-}
-
-/**
- * Calculate the angle of a line segment relative to the vertical (0° = straight down)
- * @param start Starting point [x, y]
- * @param end Ending point [x, y]
- * @returns Angle in degrees (0-180)
- */
-function calculateSegmentAngleFromVertical(start: number[], end: number[]): number {
-  // Vector from start to end
-  const dx = end[0] - start[0]
-  const dy = end[1] - start[1]
-  
-  // Angle from vertical (negative Y axis, since Y increases downward in screen coords)
-  // atan2(dx, -dy) gives angle from vertical
-  const radians = Math.atan2(dx, dy)
-  const degrees = Math.abs((radians * 180.0) / Math.PI)
-  
-  return degrees
-}
-
-/**
- * Calculate the angle of a line segment relative to the horizontal (0° = horizontal)
- * @param start Starting point [x, y]
- * @param end Ending point [x, y]
- * @returns Angle in degrees (0-90)
- */
-function calculateSegmentAngleFromHorizontal(start: number[], end: number[]): number {
-  const dx = end[0] - start[0]
-  const dy = end[1] - start[1]
-  
-  // Angle from horizontal
-  const radians = Math.atan2(Math.abs(dy), Math.abs(dx))
-  const degrees = (radians * 180.0) / Math.PI
-  
-  return degrees
-}
-
-/**
- * Analyze a video and extract joint movement information
+ * Analyze a video and extract joint movement information from body pose
  * @param videoBlob The video blob to analyze
  * @param anglesOfInterest Optional array of specific angles to track (e.g., ["left_knee", "right_leg_segment"])
  * @param exerciseInfo Optional exercise information for state learning
  */
-export async function analyzeVideoForPose(
+async function analyzeVideoForPoseBody(
   videoBlob: Blob,
   anglesOfInterest?: string[],
   exerciseInfo?: { name: string; type: string }
@@ -324,7 +223,7 @@ export async function analyzeVideoForPose(
     let learnedTemplate: import("./exercise-state-learner").LearnedExerciseTemplate | undefined
     
     if (exerciseInfo && anglesOfInterest && anglesOfInterest.length > 0) {
-      console.log("🧠 Learning exercise states from video...")
+      console.log("Learning exercise states from video...")
       const { learnExerciseStates } = await import("./exercise-state-learner")
       
       learnedTemplate = learnExerciseStates(
@@ -334,11 +233,10 @@ export async function analyzeVideoForPose(
         anglesOfInterest
       )
       
-      console.log(`✅ Learned ${learnedTemplate.states.length} states`)
-      console.log(`📊 Template confidence: ${learnedTemplate.metadata.confidence}%`)
+      console.log(`Learned ${learnedTemplate.states.length} states`)
+      console.log(`Template confidence: ${learnedTemplate.metadata.confidence}%`)
     }
     
-    // Cleanup
     URL.revokeObjectURL(videoUrl)
     poseLandmarker.close()
     
@@ -352,6 +250,131 @@ export async function analyzeVideoForPose(
     console.error("Error in analyzeVideoForPose:", error)
     throw error
   }
+}
+
+/**
+ * Landmark smoother using One Euro Filters
+ */
+class LandmarkSmoother {
+  private filters: Map<string, { x: OneEuroFilter; y: OneEuroFilter; z: OneEuroFilter }> = new Map()
+  
+  constructor(
+    private min_cutoff: number = 1.0,
+    private beta: number = 0.007
+  ) {}
+  
+  smoothLandmarks(landmarks: any[], timestamp: number): any[] {
+    return landmarks.map((landmark, index) => {
+      const key = `landmark_${index}`
+      
+      if (!this.filters.has(key)) {
+        this.filters.set(key, {
+          x: new OneEuroFilter(this.min_cutoff, this.beta),
+          y: new OneEuroFilter(this.min_cutoff, this.beta),
+          z: new OneEuroFilter(this.min_cutoff, this.beta),
+        })
+      }
+      
+      const filter = this.filters.get(key)!
+      
+      return {
+        x: filter.x.filter(landmark.x, timestamp),
+        y: filter.y.filter(landmark.y, timestamp),
+        z: filter.z ? filter.z.filter(landmark.z || 0, timestamp) : landmark.z,
+        visibility: landmark.visibility,
+      }
+    })
+  }
+  
+  reset() {
+    this.filters.clear()
+  }
+}
+
+const POSE_LANDMARKS = {
+  NOSE: 0,
+  LEFT_EYE_INNER: 1,
+  LEFT_EYE: 2,
+  LEFT_EYE_OUTER: 3,
+  RIGHT_EYE_INNER: 4,
+  RIGHT_EYE: 5,
+  RIGHT_EYE_OUTER: 6,
+  LEFT_EAR: 7,
+  RIGHT_EAR: 8,
+  MOUTH_LEFT: 9,
+  MOUTH_RIGHT: 10,
+  LEFT_SHOULDER: 11,
+  RIGHT_SHOULDER: 12,
+  LEFT_ELBOW: 13,
+  RIGHT_ELBOW: 14,
+  LEFT_WRIST: 15,
+  RIGHT_WRIST: 16,
+  LEFT_HIP: 23,
+  RIGHT_HIP: 24,
+  LEFT_KNEE: 25,
+  RIGHT_KNEE: 26,
+  LEFT_ANKLE: 27,
+  RIGHT_ANKLE: 28,
+  LEFT_HEEL: 29,
+  RIGHT_HEEL: 30,
+  LEFT_FOOT_INDEX: 31,
+  RIGHT_FOOT_INDEX: 32,
+}
+
+/**
+ * Calculate angle between three points (in degrees)
+ * This is the interior angle at point b, formed by vectors b->a and b->c
+ * @param a First point [x, y]
+ * @param b Middle point (vertex) [x, y]
+ * @param c Third point [x, y]
+ * @returns Angle in degrees (0-180)
+ */
+function calculateAngle(a: number[], b: number[], c: number[]): number {
+  const radians =
+    Math.atan2(c[1] - b[1], c[0] - b[0]) - Math.atan2(a[1] - b[1], a[0] - b[0])
+  let angle = Math.abs((radians * 180.0) / Math.PI)
+  
+  if (angle > 180.0) {
+    angle = 360.0 - angle
+  }
+  
+  return angle
+}
+
+/**
+ * Calculate the angle of a line segment relative to the vertical (0° = straight down)
+ * @param start Starting point [x, y]
+ * @param end Ending point [x, y]
+ * @returns Angle in degrees (0-180)
+ */
+function calculateSegmentAngleFromVertical(start: number[], end: number[]): number {
+  // Vector from start to end
+  const dx = end[0] - start[0]
+  const dy = end[1] - start[1]
+  
+  // Angle from vertical (negative Y axis, since Y increases downward in screen coords)
+  // atan2(dx, -dy) gives angle from vertical
+  const radians = Math.atan2(dx, dy)
+  const degrees = Math.abs((radians * 180.0) / Math.PI)
+  
+  return degrees
+}
+
+/**
+ * Calculate the angle of a line segment relative to the horizontal (0° = horizontal)
+ * @param start Starting point [x, y]
+ * @param end Ending point [x, y]
+ * @returns Angle in degrees (0-90)
+ */
+function calculateSegmentAngleFromHorizontal(start: number[], end: number[]): number {
+  const dx = end[0] - start[0]
+  const dy = end[1] - start[1]
+  
+  // Angle from horizontal
+  const radians = Math.atan2(Math.abs(dy), Math.abs(dx))
+  const degrees = (radians * 180.0) / Math.PI
+  
+  return degrees
 }
 
 /**
@@ -593,6 +616,39 @@ function calculateJointAngles(
       angles.push({ joint: "right_forearm_segment", angle: rightForearmSegmentAngle })
     } catch (e) {
       console.warn("Could not calculate right forearm segment angle")
+    }
+  }
+  
+  // === FACE ANGLES (using pose landmarks 0-10) ===
+  // Head yaw (left/right rotation)
+  if (shouldTrack("head_yaw")) {
+    try {
+      const nose = getLandmark(POSE_LANDMARKS.NOSE)
+      const leftEye = getLandmark(POSE_LANDMARKS.LEFT_EYE_OUTER)
+      const rightEye = getLandmark(POSE_LANDMARKS.RIGHT_EYE_OUTER)
+      
+      const leftDist = Math.sqrt(
+        Math.pow(nose[0] - leftEye[0], 2) + Math.pow(nose[1] - leftEye[1], 2)
+      )
+      const rightDist = Math.sqrt(
+        Math.pow(nose[0] - rightEye[0], 2) + Math.pow(nose[1] - rightEye[1], 2)
+      )
+      const ratio = leftDist / rightDist
+      const yaw = Math.atan((ratio - 1) / 0.5) * (180 / Math.PI)
+      angles.push({ joint: "head_yaw", angle: yaw })
+    } catch (e) {
+      console.warn("Could not calculate head yaw")
+    }
+  }
+  
+  // Nose horizontal position
+  if (shouldTrack("nose_horizontal")) {
+    try {
+      const nose = getLandmark(POSE_LANDMARKS.NOSE)
+      const noseX = (nose[0] * 2 - 1 + 1) * 90
+      angles.push({ joint: "nose_horizontal", angle: noseX })
+    } catch (e) {
+      console.warn("Could not calculate nose horizontal")
     }
   }
   

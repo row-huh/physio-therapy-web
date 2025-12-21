@@ -50,7 +50,7 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
       </Card>
 
       {/* States */}
-      {/* <div className="space-y-4">
+      <div className="space-y-4">
         <h3 className="text-xl font-semibold">Detected States</h3>
         
         {template.states.map((state, index) => (
@@ -102,10 +102,10 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
             </div>
           </Card>
         ))}
-      </div> */}
+      </div>
 
       {/* State Sequence Flow */}
-      {/* <Card className="p-6">
+      <Card className="p-6">
         <h3 className="text-xl font-semibold mb-4">Exercise Flow</h3>
         <div className="flex items-center gap-2 flex-wrap">
           {template.repSequence.map((stateId, index) => {
@@ -122,10 +122,10 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
             )
           })}
         </div>
-      </Card> */}
+      </Card>
 
       {/* Transitions */}
-      {/* {template.transitions.length > 0 && (
+      {template.transitions.length > 0 && (
         <Card className="p-6">
           <h3 className="text-xl font-semibold mb-4">Transitions</h3>
           <div className="space-y-3">
@@ -161,13 +161,13 @@ export function LearnedTemplateView({ template, onSaveTemplate }: LearnedTemplat
             })}
           </div>
         </Card>
-      )} */}
+      )}
 
       {/* Actions */}
       {onSaveTemplate && (
         <div className="flex justify-end">
           <Button onClick={onSaveTemplate} size="lg">
-            💾 Save Template for Comparisons
+            Save Template for Comparisons
           </Button>
         </div>
       )}

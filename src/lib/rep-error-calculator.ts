@@ -13,7 +13,7 @@ export interface RepError {
       percentError: number 
     }
   }
-  overallError: Number
+  overallError: number
   formScore: number 
   stateName: string 
 }

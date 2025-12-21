@@ -1,7 +1,5 @@
 "use client"
 
-
-
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -374,7 +372,7 @@ export default function ComparePage() {
             </div>
             <ComparisonRecorder 
               onVideoRecorded={handleVideoRecorded}
-              anglesOfInterest={["right_knee"]}
+              anglesOfInterest={getExerciseConfig(exercise?.type)?.anglesOfInterest || ["right_knee"]}
               exerciseName={exercise?.name}
               exerciseType={exercise?.type}
               enableTestMode={true}
@@ -516,6 +514,24 @@ export default function ComparePage() {
               </Card>
             </div>
 
+            {/* Exercise-specific feedback */}
+            {exercise.type === 'scap-wall-slides' && (
+              <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  <strong>Bilateral Exercise:</strong> Both arms are tracked together. 
+                  Keep both shoulders and elbows moving in sync through the 105-155° range for best results.
+                </p>
+              </div>
+            )}
+            {exercise.type === 'knee-extension' && (
+              <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  <strong>Single Leg Exercise:</strong> Each leg is tracked independently. 
+                  Focus on maintaining control and reaching full extension with each rep.
+                </p>
+              </div>
+            )}
+
 
             {/* State Matches */}
             <div className="mb-6">
@@ -553,15 +569,32 @@ export default function ComparePage() {
             <div>
               <h3 className="text-lg font-semibold mb-3">Angle Deviations</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {Object.entries(comparisonResult.details.angleDeviations).map(([angle, deviation]) => (
-                  <Card key={angle} className={`p-3 ${deviation < 10 ? 'bg-green-50 dark:bg-green-950/20' :
-                    deviation < 20 ? 'bg-yellow-50 dark:bg-yellow-950/20' :
-                      'bg-red-50 dark:bg-red-950/20'
-                    }`}>
-                    <div className="text-xs text-muted-foreground mb-1">{angle}</div>
-                    <div className="text-xl font-bold">±{Math.round(deviation)}°</div>
-                  </Card>
-                ))}
+                {Object.entries(comparisonResult.details.angleDeviations)
+                  .sort(([a], [b]) => {
+                    // Sort to group left/right pairs together
+                    const aBase = a.replace(/^(left_|right_)/, '')
+                    const bBase = b.replace(/^(left_|right_)/, '')
+                    if (aBase === bBase) {
+                      return a.includes('left') ? -1 : 1
+                    }
+                    return a.localeCompare(b)
+                  })
+                  .map(([angle, deviation]) => {
+                    // Format angle names to be more readable
+                    const formattedAngle = angle
+                      .replace(/_/g, ' ')
+                      .replace(/\b\w/g, (char) => char.toUpperCase())
+                    
+                    return (
+                      <Card key={angle} className={`p-3 ${deviation < 10 ? 'bg-green-50 dark:bg-green-950/20' :
+                        deviation < 20 ? 'bg-yellow-50 dark:bg-yellow-950/20' :
+                          'bg-red-50 dark:bg-red-950/20'
+                        }`}>
+                        <div className="text-xs text-muted-foreground mb-1">{formattedAngle}</div>
+                        <div className="text-xl font-bold">±{Math.round(deviation)}°</div>
+                      </Card>
+                    )
+                  })}
               </div>
             </div>
           </Card>

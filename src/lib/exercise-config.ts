@@ -116,6 +116,44 @@ export const EXERCISE_CONFIGS: ExerciseConfig[] = [
     ],
   },
   {
+    id: "scap-wall-slides",
+    name: "Scap Wall Slides",
+    description: "Bilateral arm exercise against a wall - slide arms up and down maintaining contact with wall",
+    anglesOfInterest: [
+      "left_shoulder",
+      "right_shoulder",
+      "left_elbow",
+      "right_elbow",
+      "left_arm_segment",
+      "right_arm_segment",
+      "left_forearm_segment",
+      "right_forearm_segment",
+    ],
+    angleConfigs: [
+      { type: "joint", name: "left_shoulder", description: "Left shoulder joint angle (elbow-shoulder-hip)" },
+      { type: "joint", name: "right_shoulder", description: "Right shoulder joint angle (elbow-shoulder-hip)" },
+      { type: "joint", name: "left_elbow", description: "Left elbow joint angle (shoulder-elbow-wrist)" },
+      { type: "joint", name: "right_elbow", description: "Right elbow joint angle (shoulder-elbow-wrist)" },
+      { type: "segment", name: "left_arm_segment", description: "Left upper arm angle from vertical (shoulder-elbow)" },
+      { type: "segment", name: "right_arm_segment", description: "Right upper arm angle from vertical (shoulder-elbow)" },
+      { type: "segment", name: "left_forearm_segment", description: "Left forearm angle from vertical (elbow-wrist)" },
+      { type: "segment", name: "right_forearm_segment", description: "Right forearm angle from vertical (elbow-wrist)" },
+    ],
+  },
+  {
+    id: "neck-rotation",
+    name: "Neck Rotation",
+    description: "Rotating head left and right to track face landmarks",
+    anglesOfInterest: [
+      "head_yaw",          // Horizontal rotation (left/right)
+      "nose_horizontal",   // Nose position horizontally
+    ],
+    angleConfigs: [
+      { type: "joint", name: "head_yaw", description: "Head rotation angle (left/right turn)" },
+      { type: "segment", name: "nose_horizontal", description: "Nose horizontal position" },
+    ],
+  },
+  {
     id: "custom",
     name: "Custom Exercise",
     description: "Track all joints and segments",

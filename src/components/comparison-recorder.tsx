@@ -16,6 +16,18 @@ interface ComparisonRecorderProps {
 }
 
 const POSE_LANDMARKS = {
+  NOSE: 0,
+  LEFT_EYE_INNER: 1,
+  LEFT_EYE: 2,
+  LEFT_EYE_OUTER: 3,
+  RIGHT_EYE_INNER: 4,
+  RIGHT_EYE: 5,
+  RIGHT_EYE_OUTER: 6,
+  LEFT_EAR: 7,
+  RIGHT_EAR: 8,
+  MOUTH_LEFT: 9,
+  MOUTH_RIGHT: 10,
+  // Body landmarks
   LEFT_SHOULDER: 11,
   RIGHT_SHOULDER: 12,
   LEFT_ELBOW: 13,
@@ -99,7 +111,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const rafRef = useRef<number | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  
 
   const [currentAngles, setCurrentAngles] = useState<JointAngleData>({})
   const [repCount, setRepCount] = useState(0)
@@ -230,6 +241,18 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         getLandmark(POSE_LANDMARKS.RIGHT_HIP),
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
       )
+
+      angles.left_shoulder = calculateAngle(
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_HIP)
+      )
+      
+      angles.right_shoulder = calculateAngle(
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_HIP)
+      )
       
       angles.left_leg_segment = calculateSegmentAngleFromVertical(
         getLandmark(POSE_LANDMARKS.LEFT_KNEE),
@@ -250,6 +273,41 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         getLandmark(POSE_LANDMARKS.RIGHT_HIP),
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
       )
+
+      angles.left_arm_segment = calculateSegmentAngleFromVertical(
+        getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW)
+      )
+      
+      angles.right_arm_segment = calculateSegmentAngleFromVertical(
+        getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW)
+      )
+      
+      angles.left_forearm_segment = calculateSegmentAngleFromVertical(
+        getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
+        getLandmark(POSE_LANDMARKS.LEFT_WRIST)
+      )
+      
+      angles.right_forearm_segment = calculateSegmentAngleFromVertical(
+        getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
+        getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
+      )
+      
+      const nose = getLandmark(POSE_LANDMARKS.NOSE)
+      const leftEye = getLandmark(POSE_LANDMARKS.LEFT_EYE_OUTER)
+      const rightEye = getLandmark(POSE_LANDMARKS.RIGHT_EYE_OUTER)
+      
+      const leftDist = Math.sqrt(
+        Math.pow(nose[0] - leftEye[0], 2) + Math.pow(nose[1] - leftEye[1], 2)
+      )
+      const rightDist = Math.sqrt(
+        Math.pow(nose[0] - rightEye[0], 2) + Math.pow(nose[1] - rightEye[1], 2)
+      )
+      const ratio = leftDist / rightDist
+      angles.head_yaw = Math.atan((ratio - 1) / 0.5) * (180 / Math.PI)
+      
+      angles.nose_horizontal = (nose[0] * 2 - 1 + 1) * 90
     } catch (e) {
       console.warn("Error calculating some angles:", e)
     }
@@ -277,8 +335,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }
 
 
-// figures out reps by seeing the maaximum and minimum angles aa joint was flexed/extended 
-// to be decided later whether a rep should be counter even if it's above or below the max/min thresholds
   const determineExerciseState = (angles: JointAngleData): string => {
     if (!anglesOfInterest || anglesOfInterest.length === 0) return ""
     
@@ -286,6 +342,11 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     const angle = angles[primaryAngle]
     
     if (angle === undefined) return ""
+    
+    if (minAngleSeenRef.current === 180 && maxAngleSeenRef.current === 0) {
+      minAngleSeenRef.current = angle
+      maxAngleSeenRef.current = angle
+    }
     
     if (angle < minAngleSeenRef.current) {
       minAngleSeenRef.current = angle
@@ -296,13 +357,14 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     
     if (!hasLearnedThresholdsRef.current && angleHistoryRef.current.length > 60) {
       const range = maxAngleSeenRef.current - minAngleSeenRef.current
-      if (range > 20) {
+      const minRange = primaryAngle === "head_yaw" || primaryAngle === "nose_horizontal" ? 10 : 20
+      if (range > minRange) {
         const mid = (maxAngleSeenRef.current + minAngleSeenRef.current) / 2
-        const band = Math.max(5, range * 0.1)
+        const band = Math.max(3, range * 0.15)
         flexedThresholdRef.current = mid - band
         extendedThresholdRef.current = mid + band
         hasLearnedThresholdsRef.current = true
-        console.log(`Learned hysteresis thresholds: flexed < ${Math.round(flexedThresholdRef.current)}°, extended > ${Math.round(extendedThresholdRef.current)}° (range ${Math.round(range)}°)`)        
+        console.log(`Learned thresholds for ${primaryAngle}: flexed < ${flexedThresholdRef.current.toFixed(1)}°, extended > ${extendedThresholdRef.current.toFixed(1)}° (range ${range.toFixed(1)}°)`)        
       }
     }
     
@@ -506,9 +568,11 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     const ctx = canvasRef.current.getContext("2d")
     if (!ctx) return
     const drawer = new DrawingUtils(ctx)
+    let frameCount = 0
 
     const render = () => {
       if (!videoRef.current || !poseRef.current || !canvasRef.current) return
+      frameCount++
 
       if (
         canvasRef.current.width !== videoRef.current.videoWidth ||
@@ -529,20 +593,23 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         const rawAngles = calculateAllAngles(landmarks)
         const smoothedAngles = smoothAngles(rawAngles, ts / 1000)
         
+        // Debug logging for face exercises
+        if (anglesOfInterest && anglesOfInterest[0] === "head_yaw" && frameCount % 30 === 0) {
+          console.log('🔍 Head yaw:', smoothedAngles.head_yaw?.toFixed(1), 
+                      'Min:', minAngleSeenRef.current.toFixed(1), 
+                      'Max:', maxAngleSeenRef.current.toFixed(1),
+                      'Thresholds learned:', hasLearnedThresholdsRef.current)
+        }
         
         setCurrentAngles(smoothedAngles)
-        
         
         angleHistoryRef.current.push({
           timestamp: ts / 1000,
           angles: smoothedAngles
         })
-        // Maintain primary angle time-series for peak/trough detection and similarity metrics
         if (anglesOfInterest && anglesOfInterest.length > 0) {
-          // Prefer right_knee; fallback to left_knee if undefined
-          const preferred = "right_knee"
-          const primary = smoothedAngles[preferred] !== undefined ? preferred : anglesOfInterest[0]
-          const val = smoothedAngles[primary] ?? smoothedAngles["left_knee"]
+          const primary = anglesOfInterest[0]
+          const val = smoothedAngles[primary]
           if (val !== undefined) {
             primaryAngleHistoryRef.current.push({ t: ts / 1000, value: val })
             const cutoffT = (ts / 1000) - 12
@@ -554,13 +621,11 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           h => h.timestamp > cutoffTime
         )
         
-        // Template-driven state and reps if template is present; else fallback
         let stateLabel = ""
         if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
           const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
           stateLabel = mapped?.name || ""
           if (stateLabel) setTemplateState(stateLabel)
-          // Template-driven rep count in-component: Start->Peak->Start
           const primary = anglesOfInterest[0]
           const sortable = learnedTemplateRef.current.states.filter(s => s.angleRanges[primary])
           if (mapped && sortable.length >= 2) {
@@ -577,8 +642,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
                 if (mapped.id === startId && hasVisitedPeakRef.current && lastStateRef.current === peakId) {
                   setRepCount(prev => {
                     const newCount = prev + 1
-                    // Calculate error for completed rep
-                    if (learnedTemplateRef.current && anglesOfInterest) {
+                   if (learnedTemplateRef.current && anglesOfInterest) {
                       const error = calculateRepError(
                         smoothedAngles,
                         learnedTemplateRef.current,
@@ -617,7 +681,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           const score = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
           setFormScore(Math.round(score))
           
-          // Calculate real-time error for feedback
           const realtimeError = calculateRepError(
             smoothedAngles,
             learnedTemplateRef.current,
@@ -727,8 +790,8 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     const prev = deriv[lastIdx - 1]
     const curr = deriv[lastIdx]
     const nowT = recent[recent.length - 1].t
-  const HYST_DERIV = 4 // deg/s hysteresis to avoid noise
-    const MIN_INTERVAL = 0.25 // seconds between state changes
+  const HYST_DERIV = 4 
+    const MIN_INTERVAL = 0.25 
     const state = repSignalStateRef.current
   const dir: 'up' | 'down' | null = curr > HYST_DERIV ? 'up' : curr < -HYST_DERIV ? 'down' : (state.lastDirection ?? null)
     if (!dir) return
@@ -748,8 +811,18 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           const windowVals = primaryAngleHistoryRef.current.map(p => p.value)
           const observedRange = windowVals.length > 0 ? (Math.max(...windowVals) - Math.min(...windowVals)) : 0
           const MIN_ROM = Math.max(20, observedRange * 0.35) 
-          const PEAK_MIN = 148  // slightly lower
-          const TROUGH_MAX = 108 // slightly higher to allow error margin (otherwise reps would be skipped)
+          
+          let PEAK_MIN = 148
+          let TROUGH_MAX = 108
+          
+          if (exerciseType === 'scap-wall-slides') {
+             PEAK_MIN = 140 
+             TROUGH_MAX = 120 
+          } else if (exerciseType === 'knee-extension') {
+             PEAK_MIN = 150 
+             TROUGH_MAX = 100 
+          }
+
           const peakOK = state.lastPeak >= PEAK_MIN
           const troughOK = state.lastTrough <= TROUGH_MAX
           console.log(`[REP DEBUG] ROM=${rom.toFixed(1)} peak=${state.lastPeak?.toFixed(1)} trough=${state.lastTrough?.toFixed(1)} peakOK=${peakOK} troughOK=${troughOK}`)
@@ -773,118 +846,56 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     const width = canvasRef.current?.width || 640
     const height = canvasRef.current?.height || 480
     
+    if (!anglesOfInterest || anglesOfInterest.length === 0) return
+    
+    const primaryAngle = anglesOfInterest[0]
+    const primaryValue = angles[primaryAngle]
+    
+    if (primaryValue !== undefined) {
+      const isFaceExercise = primaryAngle === "head_yaw" || primaryAngle === "nose_horizontal"
+      
+      if (isFaceExercise) {
+        const nose = landmarks[POSE_LANDMARKS.NOSE]
+        ctx.fillStyle = "#00ffff"
+        ctx.font = "bold 24px Arial"
+        ctx.strokeStyle = "#000000"
+        ctx.lineWidth = 5
+        const text = `${primaryAngle.replace('_', ' ')}: ${Math.round(primaryValue)}°`
+        const x = nose.x * width + 20
+        const y = nose.y * height - 20
+        ctx.strokeText(text, x, y)
+        ctx.fillText(text, x, y)
+      } else {
 
-    const shouldDisplay = (angleName: string) => {
-      if (!anglesOfInterest || anglesOfInterest.length === 0) return true
-      return anglesOfInterest.includes(angleName)
-    }
-    
-
-    if (shouldDisplay("right_knee") && angles.right_knee !== undefined) {
-      const knee = landmarks[POSE_LANDMARKS.RIGHT_KNEE]
-      ctx.fillStyle = "#00ffff"
-      ctx.font = "bold 20px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 4
-      const text = `${Math.round(angles.right_knee)}°`
-      const x = knee.x * width + 15
-      const y = knee.y * height - 10
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-    if (shouldDisplay("left_knee") && angles.left_knee !== undefined) {
-      const knee = landmarks[POSE_LANDMARKS.LEFT_KNEE]
-      ctx.fillStyle = "#00ffff"
-      ctx.font = "bold 20px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 4
-      const text = `${Math.round(angles.left_knee)}°`
-      const x = knee.x * width - 65
-      const y = knee.y * height - 10
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-
-    if (shouldDisplay("right_elbow") && angles.right_elbow !== undefined) {
-      const elbow = landmarks[POSE_LANDMARKS.RIGHT_ELBOW]
-      ctx.fillStyle = "#ff00ff"
-      ctx.font = "bold 18px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 4
-      const text = `${Math.round(angles.right_elbow)}°`
-      const x = elbow.x * width + 12
-      const y = elbow.y * height
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-    if (shouldDisplay("left_elbow") && angles.left_elbow !== undefined) {
-      const elbow = landmarks[POSE_LANDMARKS.LEFT_ELBOW]
-      ctx.fillStyle = "#ff00ff"
-      ctx.font = "bold 18px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 4
-      const text = `${Math.round(angles.left_elbow)}°`
-      const x = elbow.x * width - 60
-      const y = elbow.y * height
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-
-    if (shouldDisplay("right_hip") && angles.right_hip !== undefined) {
-      const hip = landmarks[POSE_LANDMARKS.RIGHT_HIP]
-      ctx.fillStyle = "#ffaa00"
-      ctx.font = "bold 18px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 4
-      const text = `${Math.round(angles.right_hip)}°`
-      const x = hip.x * width + 12
-      const y = hip.y * height + 5
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-    if (shouldDisplay("left_hip") && angles.left_hip !== undefined) {
-      const hip = landmarks[POSE_LANDMARKS.LEFT_HIP]
-      ctx.fillStyle = "#ffaa00"
-      ctx.font = "bold 18px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 4
-      const text = `${Math.round(angles.left_hip)}°`
-      const x = hip.x * width - 60
-      const y = hip.y * height + 5
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-
-    if (shouldDisplay("right_leg_segment") && angles.right_leg_segment !== undefined) {
-      const knee = landmarks[POSE_LANDMARKS.RIGHT_KNEE]
-      ctx.fillStyle = "#ffffff"
-      ctx.font = "14px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 3
-      const text = `seg: ${Math.round(angles.right_leg_segment)}°`
-      const x = knee.x * width + 15
-      const y = knee.y * height + 25
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
-    }
-    
-    if (shouldDisplay("left_leg_segment") && angles.left_leg_segment !== undefined) {
-      const knee = landmarks[POSE_LANDMARKS.LEFT_KNEE]
-      ctx.fillStyle = "#ffffff"
-      ctx.font = "14px Arial"
-      ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 3
-      const text = `seg: ${Math.round(angles.left_leg_segment)}°`
-      const x = knee.x * width - 80
-      const y = knee.y * height + 25
-      ctx.strokeText(text, x, y)
-      ctx.fillText(text, x, y)
+        const angleToLandmarkMap: { [key: string]: { landmark: number; offsetX: number; offsetY: number } } = {
+          'left_knee': { landmark: POSE_LANDMARKS.LEFT_KNEE, offsetX: -65, offsetY: -10 },
+          'right_knee': { landmark: POSE_LANDMARKS.RIGHT_KNEE, offsetX: 15, offsetY: -10 },
+          'left_elbow': { landmark: POSE_LANDMARKS.LEFT_ELBOW, offsetX: -65, offsetY: -10 },
+          'right_elbow': { landmark: POSE_LANDMARKS.RIGHT_ELBOW, offsetX: 15, offsetY: -10 },
+          'left_shoulder': { landmark: POSE_LANDMARKS.LEFT_SHOULDER, offsetX: -75, offsetY: -10 },
+          'right_shoulder': { landmark: POSE_LANDMARKS.RIGHT_SHOULDER, offsetX: 15, offsetY: -10 },
+          'left_hip': { landmark: POSE_LANDMARKS.LEFT_HIP, offsetX: -65, offsetY: -10 },
+          'right_hip': { landmark: POSE_LANDMARKS.RIGHT_HIP, offsetX: 15, offsetY: -10 },
+        }
+        
+        anglesOfInterest
+          .filter(angleName => angles[angleName] !== undefined && angleToLandmarkMap[angleName])
+          .forEach(angleName => {
+            const config = angleToLandmarkMap[angleName]
+            const joint = landmarks[config.landmark]
+            if (joint) {
+              ctx.fillStyle = "#00ffff"
+              ctx.font = "bold 20px Arial"
+              ctx.strokeStyle = "#000000"
+              ctx.lineWidth = 4
+              const text = `${Math.round(angles[angleName])}°`
+              const x = joint.x * width + config.offsetX
+              const y = joint.y * height + config.offsetY
+              ctx.strokeText(text, x, y)
+              ctx.fillText(text, x, y)
+            }
+          })
+      }
     }
   }
 
@@ -1061,13 +1072,18 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         <>
           <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
             <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
-              realtime tracking guide
+              Realtime Tracking Guide
             </h4>
             <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-              <li>Cyan = Knee angles</li>
-              <li>Purple = Elbow angles</li>
-              <li>Orange = Hip angles</li>
-              <li>White seg = Segment angles</li>
+              <li>Cyan values = Live joint angles</li>
+              <li>Stand so your full body is visible</li>
+              <li>Perform the exercise slowly and steadily</li>
+              {anglesOfInterest?.some(a => a.includes('shoulder') || a.includes('elbow')) && (
+                <li>Keep your arms clearly visible to the camera</li>
+              )}
+              {anglesOfInterest?.some(a => a.includes('knee') || a.includes('hip')) && (
+                <li>Ensure your legs are clearly visible</li>
+              )}
               {exerciseName && <li>Exercise: {exerciseName}</li>}
             </ul>
           </div>
