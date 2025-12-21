@@ -39,7 +39,7 @@ function saveVideos(videos: ExerciseVideo[]) {
 export async function saveExerciseVideo(
   name: string, 
   videoBlob: Blob, 
-  exerciseType: string = "custom",
+  exerciseType: string = "knee-extension",
   learnedTemplate?: LearnedExerciseTemplate
 ): Promise<ExerciseVideo> {
   const id = Date.now().toString()
