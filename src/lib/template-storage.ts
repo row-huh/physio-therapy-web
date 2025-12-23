@@ -186,7 +186,7 @@ function tryPersistTemplates(templates: SavedTemplate[]) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal))
         console.info("Stored minimal template data after cleanup.")
       } catch (e2) {
-        console.error("❌ Failed to persist minimal template data.", e2)
+        console.error("Failed to persist minimal template data.", e2)
       }
     } else {
       console.error("Error persisting templates:", err)

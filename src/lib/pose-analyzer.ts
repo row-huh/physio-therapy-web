@@ -45,6 +45,7 @@ class OneEuroFilter {
   private x_prev: number = 0
   private dx_prev: number = 0
   private t_prev: number = 0
+  private isFirstRun: boolean = true
   
   constructor(
     private min_cutoff: number = 1.0,
@@ -62,6 +63,13 @@ class OneEuroFilter {
   }
   
   filter(x: number, t: number): number {
+    if (this.isFirstRun) {
+      this.isFirstRun = false
+      this.x_prev = x
+      this.t_prev = t
+      return x
+    }
+
     const t_e = this.t_prev === 0 ? 0 : t - this.t_prev
     
     if (t_e === 0) {
@@ -135,7 +143,6 @@ async function analyzeVideoForPoseBody(
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
-      // Output segmentation mask helps with tracking stability
       outputSegmentationMasks: false,
     })
     console.log("PoseLandmarker created successfully")

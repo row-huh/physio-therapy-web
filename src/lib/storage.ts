@@ -30,9 +30,9 @@ function saveVideos(videos: ExerciseVideo[]) {
   if (typeof window === "undefined") return
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(videos))
-    console.log(`✅ Saved ${videos.length} exercise videos metadata to localStorage`)
+    console.log(`Saved ${videos.length} exercise videos metadata to localStorage`)
   } catch (e: any) {
-    console.error("❌ Error saving exercise videos metadata:", e)
+    console.error("Error saving exercise videos metadata:", e)
   }
 }
 
@@ -43,7 +43,7 @@ export async function saveExerciseVideo(
   learnedTemplate?: LearnedExerciseTemplate
 ): Promise<ExerciseVideo> {
   const id = Date.now().toString()
-  console.log(`📹 Saving exercise video: ${name} (${exerciseType})`)
+  console.log(`Saving exercise video: ${name} (${exerciseType})`)
   
   try {
     const supabase = createClient()
@@ -62,7 +62,7 @@ export async function saveExerciseVideo(
       })
     
     if (uploadError) {
-      console.error("❌ Supabase upload error:", uploadError)
+      console.error("Supabase upload error:", uploadError)
       throw new Error(`Failed to upload video: ${uploadError.message}`)
     }
     

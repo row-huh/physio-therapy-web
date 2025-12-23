@@ -47,6 +47,7 @@ class OneEuroFilter {
   private x_prev: number = 0
   private dx_prev: number = 0
   private t_prev: number = 0
+  private isFirstRun: boolean = true
   
   constructor(
     private min_cutoff: number = 1.0,
@@ -64,6 +65,13 @@ class OneEuroFilter {
   }
   
   filter(x: number, t: number): number {
+    if (this.isFirstRun) {
+      this.isFirstRun = false
+      this.x_prev = x
+      this.t_prev = t
+      return x
+    }
+
     const t_e = this.t_prev === 0 ? 0.016 : t - this.t_prev
     
     if (t_e === 0) {
@@ -96,6 +104,7 @@ class OneEuroFilter {
     this.x_prev = 0
     this.dx_prev = 0
     this.t_prev = 0
+    this.isFirstRun = true
   }
 }
 
@@ -657,10 +666,12 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
             if (mapped.id !== lastStateRef.current) {
               const dt = (ts / 1000) - stateChangeTimestampRef.current
               if (dt >= MIN_STATE_DURATION || lastStateRef.current === "") {
-                if (mapped.id === peakId && lastStateRef.current === startId) {
+                // Relaxed logic: just check if we reached the target state, ignore where we came from
+                // This handles intermediate states (start -> mid -> peak -> mid -> start)
+                if (mapped.id === peakId) {
                   hasVisitedPeakRef.current = true
                 }
-                if (mapped.id === startId && hasVisitedPeakRef.current && lastStateRef.current === peakId) {
+                if (mapped.id === startId && hasVisitedPeakRef.current) {
                   setRepCount(prev => {
                     const newCount = prev + 1
                    if (learnedTemplateRef.current && anglesOfInterest) {
@@ -730,7 +741,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         })
         
         drawAngleAnnotations(ctx, landmarks, smoothedAngles)
-        // drawLiveMetrics(ctx)
       }
 
       rafRef.current = requestAnimationFrame(render)
@@ -739,57 +749,6 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     rafRef.current = requestAnimationFrame(render)
   }
 
-  const drawLiveMetrics = (ctx: CanvasRenderingContext2D) => {
-    if (!anglesOfInterest || anglesOfInterest.length === 0) return
-    const primary = anglesOfInterest[0]
-    const width = canvasRef.current?.width || 640
-    const height = canvasRef.current?.height || 480
-    const series = primaryAngleHistoryRef.current
-    if (series.length < 15) return
-    const values = series.map(s => s.value)
-    const rom = Math.max(0, Math.min(100, ((Math.max(...values) - Math.min(...values)) / 180) * 100))
-
-    const recentStartT = series[0].t
-    const recentEndT = series[series.length - 1].t
-    const windowSec = Math.max(1, recentEndT - recentStartT)
-
-    let similarity = 0
-    if (values.length >= 30) {
-      const mid = Math.floor(values.length / 2)
-      const a = values.slice(0, mid)
-      const b = values.slice(values.length - mid)
-      const norm = (arr: number[]) => {
-        const m = arr.reduce((s, v) => s + v, 0) / arr.length
-        const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) * (v - m), 0) / arr.length) || 1
-        return arr.map(v => (v - m) / sd)
-      }
-      const an = norm(a)
-      const bn = norm(b)
-      const len = Math.min(an.length, bn.length)
-      const dot = an.slice(0, len).reduce((s, v, i) => s + v * bn[i], 0)
-      similarity = Math.max(0, Math.min(100, (dot / len) * 50 + 50)) // map [-1,1] -> [0,100]
-    }
-
-    ctx.save()
-    ctx.fillStyle = "#111827CC"
-    ctx.strokeStyle = "#9333ea"
-    ctx.lineWidth = 2
-    const boxW = 240
-    const boxH = 100
-    const x = 20
-    const y = height - boxH - 20
-    ctx.fillRect(x, y, boxW, boxH)
-    ctx.strokeRect(x, y, boxW, boxH)
-    ctx.fillStyle = "#a78bfa"
-    ctx.font = "bold 14px Arial"
-    ctx.fillText("LIVE METRICS", x + 12, y + 22)
-    ctx.fillStyle = "#ffffff"
-    ctx.font = "12px Arial"
-    ctx.fillText(`ROM: ${Math.round(rom)}%`, x + 12, y + 44)
-    ctx.fillText(`Tempo: ${(repCount / (windowSec / 60)).toFixed(1)} reps/min`, x + 12, y + 64)
-    ctx.fillText(`Similarity: ${Math.round(similarity)}%`, x + 12, y + 84)
-    ctx.restore()
-  }
 
 
   const repSignalStatesRef = useRef<{[key: string]: { 
@@ -1237,15 +1196,35 @@ function mapToTemplateState(
   anglesOfInterest: string[]
 ): { id: string; name: string } | null {
   const primary = getDriverAngle(template, anglesOfInterest)
-  const cur = angles[primary]
-  if (cur === undefined) return null
   const candidates = template.states.filter(s => s.angleRanges[primary])
   if (candidates.length === 0) return null
-  const nearest = candidates.reduce((best, s) => {
-    const m = s.angleRanges[primary].mean
-    const d = Math.abs(cur - m)
-    return (!best || d < Math.abs(cur - best.angleRanges[primary].mean)) ? s : best
+
+  // Use Euclidean distance across all angles for robust matching
+  const nearest = candidates.reduce((best, state) => {
+    const calculateDistance = (s: typeof state) => {
+      let sumSquaredDiff = 0
+      let count = 0
+      
+      anglesOfInterest.forEach(angle => {
+        const range = s.angleRanges[angle]
+        const val = angles[angle]
+        if (range && val !== undefined) {
+          const diff = val - range.mean
+          const scale = range.stdDev > 0 ? range.stdDev : 10
+          sumSquaredDiff += Math.pow(diff / scale, 2)
+          count++
+        }
+      })
+      
+      return count > 0 ? Math.sqrt(sumSquaredDiff / count) : Infinity
+    }
+
+    const currentDist = calculateDistance(state)
+    const bestDist = calculateDistance(best)
+    
+    return currentDist < bestDist ? state : best
   }, candidates[0])
+
   return { id: nearest.id, name: nearest.name }
 }
 

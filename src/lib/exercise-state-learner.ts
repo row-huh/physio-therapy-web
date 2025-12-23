@@ -513,14 +513,13 @@ export function learnExerciseStates(
     stateSequence.push(timeline[timeline.length - 1].stateId)
   }
   
-  console.log(`🔄 Detected ${transitions.length} transitions`)
-  console.log(`📊 Sequence:`, stateSequence.map(id => 
+  console.log(`Detected ${transitions.length} transitions`)
+  console.log(`Sequence:`, stateSequence.map(id => 
     detectedStates.find(s => s.id === id)?.name
   ).join(" → "))
   
   const totalDuration = timestamps[timestamps.length - 1] - timestamps[0]
   
-  // NEW REP COUNTING ALGORITHM: Count complete cycles
   const estimatedReps = countRepetitions(detectedStates, stateSequence, angleNames)
   
   console.log(`💪 Counted ${estimatedReps} repetitions`)
