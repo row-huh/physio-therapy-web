@@ -123,15 +123,20 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
 
   const [currentAngles, setCurrentAngles] = useState<JointAngleData>({})
   const [repCount, setRepCount] = useState(0)
+  const [correctRepCount, setCorrectRepCount] = useState(0)
+  const [incorrectRepCount, setIncorrectRepCount] = useState(0)
   const [currentState, setCurrentState] = useState<string>("")
-  const [formScore, setFormScore] = useState<number | null>(null)
-  const [templateName, setTemplateName] = useState<string | null>(null)
-  const [templateState, setTemplateState] = useState<string | null>(null)
-  const [repErrors, setRepErrors] = useState<RepError[]>([])
-  const [errorSummary, setErrorSummary] = useState<RepErrorSummary | null>(null)
-  const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
-  const [errorFeedback, setErrorFeedback] = useState<string>("")
+  const [repDetails, setRepDetails] = useState<Array<{
+    index: number
+    startTime: number
+    endTime: number
+    primaryAngle: string
+    minAngle: number
+    maxAngle: number
+    correct: boolean
+  }>>([])
   
+
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -142,14 +147,40 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const primaryAngleHistoryRef = useRef<Array<{ t: number; value: number }>>([])
   const lastStateRef = useRef<string>("")
   const hasVisitedPeakRef = useRef(false)
-  const stateChangeTimestampRef = useRef<number>(0)
-  
-  const minAngleSeenRef = useRef<number>(180)
-  const maxAngleSeenRef = useRef<number>(0)
-  const hasLearnedThresholdsRef = useRef(false)
-  const flexedThresholdRef = useRef<number>(90)
-  const extendedThresholdRef = useRef<number>(140)
-  const learnedTemplateRef = useRef<import("@/lib/exercise-state-learner").LearnedExerciseTemplate | null>(null)
+  const lastExtendedTimestampRef = useRef<number | null>(null)
+  const lastRepTimestampRef = useRef<number | null>(null)
+  const MIN_EXTENDED_HOLD = 0.2 // seconds to hold extended before a rep can be counted
+  const MIN_REP_COOLDOWN = 0.6   // seconds between reps to avoid initial extra and double counts
+  // Hysteresis thresholds for robust rep detection on primary angle
+  const PRIMARY_UP_THRESHOLD = 140 // consider moving upward (extension) when crossing above
+  const PRIMARY_DOWN_THRESHOLD = 100 // consider moving downward (flexion) when crossing below
+  const MIN_PEAK_DELTA = 15 // minimum change between valley and peak to count a rep
+  const repFSMRef = useRef<{ phase: 'idle' | 'up' | 'down'; lastValley?: number; lastPeak?: number }>({ phase: 'idle' })
+
+  const classifyRepQuality = (cycleHistory: Array<{ timestamp: number; angles: JointAngleData }>, primaryAngleName?: string) => {
+    // Simple heuristic: a correct rep must reach full extension and return close to rest
+    const name = primaryAngleName || (anglesOfInterest && anglesOfInterest[0]) || "right_knee"
+    const values = cycleHistory.map(h => h.angles[name]).filter(v => v !== undefined) as number[]
+    if (values.length === 0) return false
+    const maxAngle = Math.max(...values)
+    const minAngle = Math.min(...values)
+    // Default expected ranges; can be tuned per-exercise
+    const EXTENDED_MIN = 150
+    const REST_MAX = 90
+    const isExtendedReached = maxAngle >= EXTENDED_MIN
+    const isRestReached = minAngle <= REST_MAX
+    return isExtendedReached && isRestReached
+  }
+
+  const computeRepMinMax = (
+    cycleHistory: Array<{ timestamp: number; angles: JointAngleData }>,
+    primaryAngleName?: string
+  ): { min: number; max: number; primary: string } | null => {
+    const name = primaryAngleName || (anglesOfInterest && anglesOfInterest[0]) || "right_knee"
+    const values = cycleHistory.map(h => h.angles[name]).filter(v => v !== undefined) as number[]
+    if (values.length === 0) return null
+    return { min: Math.min(...values), max: Math.max(...values), primary: name }
+  }
 
   const POSE_CONNECTIONS = [
     { start: 0, end: 1 },
@@ -345,42 +376,24 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
 
 
   const determineExerciseState = (angles: JointAngleData): string => {
-    if (!anglesOfInterest || anglesOfInterest.length === 0) return ""
+    // Pick a sensible default primary angle if none provided
+    let primaryAngle = anglesOfInterest && anglesOfInterest.length > 0
+      ? anglesOfInterest[0]
+      : ("right_knee")
     
-    const primaryAngle = anglesOfInterest[0]
-    const angle = angles[primaryAngle]
-    
-    if (angle === undefined) return ""
-    
-    if (minAngleSeenRef.current === 180 && maxAngleSeenRef.current === 0) {
-      minAngleSeenRef.current = angle
-      maxAngleSeenRef.current = angle
+    // If the chosen angle is missing, try a couple of common fallbacks
+    let angle = angles[primaryAngle]
+    if (angle === undefined) {
+      const fallbacks = ["left_knee", "right_elbow", "left_elbow", "right_hip", "left_hip"]
+      const found = fallbacks.find(name => angles[name] !== undefined)
+      if (!found) return ""
+      primaryAngle = found
+      angle = angles[primaryAngle]
     }
     
-    if (angle < minAngleSeenRef.current) {
-      minAngleSeenRef.current = angle
-    }
-    if (angle > maxAngleSeenRef.current) {
-      maxAngleSeenRef.current = angle
-    }
-    
-    if (!hasLearnedThresholdsRef.current && angleHistoryRef.current.length > 60) {
-      const range = maxAngleSeenRef.current - minAngleSeenRef.current
-      const minRange = primaryAngle === "head_yaw" || primaryAngle === "nose_horizontal" ? 10 : 20
-      if (range > minRange) {
-        const mid = (maxAngleSeenRef.current + minAngleSeenRef.current) / 2
-        const band = Math.max(3, range * 0.15)
-        flexedThresholdRef.current = mid - band
-        extendedThresholdRef.current = mid + band
-        hasLearnedThresholdsRef.current = true
-        console.log(`Learned thresholds for ${primaryAngle}: flexed < ${flexedThresholdRef.current.toFixed(1)}°, extended > ${extendedThresholdRef.current.toFixed(1)}° (range ${range.toFixed(1)}°)`)        
-      }
-    }
-    
-    const flexedThreshold = flexedThresholdRef.current
-    const extendedThreshold = extendedThresholdRef.current
-    
-    if (angle < flexedThreshold) {
+    // thresholds here are assumed - because it makes it easier to run state detection later on 
+    // state detection then knows what to look for
+    if (angle < 70) {
       return "flexed"
     } else if (angle > extendedThreshold) {
       return "extended"
@@ -389,26 +402,83 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     }
   }
 
-
-  const updateRepCount = (state: string, timestamp: number) => {
-    if (!state) return
-    
-    const MIN_STATE_DURATION = 0.2
-    if (state !== lastStateRef.current) {
-      const timeSinceLastChange = timestamp - stateChangeTimestampRef.current
-      if (timeSinceLastChange < MIN_STATE_DURATION && lastStateRef.current !== "") {
-        return
-      }
-      if (state === "extended" && lastStateRef.current === "flexed") {
-        hasVisitedPeakRef.current = true
-      }
-      if (state === "flexed" && hasVisitedPeakRef.current && lastStateRef.current === "extended") {
-        setRepCount(prev => prev + 1)
-        hasVisitedPeakRef.current = false
-      }
+  // Velocity + hysteresis based rep counting independent of coarse state
+  const updateRepCount = (state: string) => {
+    // Derive primary angle reading
+    const primaryName = (anglesOfInterest && anglesOfInterest[0]) || 'right_knee'
+    const last = angleHistoryRef.current[angleHistoryRef.current.length - 1]
+    const prev = angleHistoryRef.current[angleHistoryRef.current.length - 2]
+    if (!last || !prev) {
       lastStateRef.current = state
-      stateChangeTimestampRef.current = timestamp
+      return
     }
+    const a = last.angles[primaryName]
+    const b = prev.angles[primaryName]
+    if (a === undefined || b === undefined) {
+      lastStateRef.current = state
+      return
+    }
+    const nowTs = last.timestamp
+    const vel = a - b
+
+    const fsm = repFSMRef.current
+    // Initialize valley at start
+    if (fsm.phase === 'idle') {
+      fsm.lastValley = a
+      fsm.phase = 'down'
+    }
+
+    // Upward phase detection (extension)
+    if (fsm.phase === 'down') {
+      // Start going up when crossing upper threshold or velocity positive
+      if (a >= PRIMARY_UP_THRESHOLD && vel > 0) {
+        fsm.phase = 'up'
+        fsm.lastPeak = a
+      }
+      // Track valley
+      if (fsm.lastValley === undefined || a < fsm.lastValley) fsm.lastValley = a
+    } else if (fsm.phase === 'up') {
+      // Update peak while ascending
+      if (fsm.lastPeak === undefined || a > fsm.lastPeak) fsm.lastPeak = a
+      // Transition back down when crossing lower threshold or velocity negative
+      if (a <= PRIMARY_DOWN_THRESHOLD && vel < 0) {
+        // Decide if a valid rep occurred
+        const valley = fsm.lastValley ?? a
+        const peak = fsm.lastPeak ?? a
+        const delta = peak - valley
+        const cooledDown = lastRepTimestampRef.current === null || (nowTs - lastRepTimestampRef.current) >= MIN_REP_COOLDOWN
+        if (delta >= MIN_PEAK_DELTA && cooledDown) {
+          setRepCount(r => r + 1)
+          lastRepTimestampRef.current = nowTs
+          // Build cycle window: last 1.5s
+          const cycle = angleHistoryRef.current.filter(h => nowTs - h.timestamp <= 1.5)
+          const isCorrect = classifyRepQuality(cycle, primaryName)
+          const minMax = computeRepMinMax(cycle, primaryName)
+          if (isCorrect) setCorrectRepCount(c => c + 1)
+          else setIncorrectRepCount(c => c + 1)
+          if (minMax) {
+            setRepDetails(prev => ([
+              ...prev,
+              {
+                index: prev.length + 1,
+                startTime: cycle.length ? cycle[0].timestamp : nowTs - 1.5,
+                endTime: nowTs,
+                primaryAngle: minMax.primary,
+                minAngle: Math.round(minMax.min),
+                maxAngle: Math.round(minMax.max),
+                correct: isCorrect,
+              }
+            ]))
+          }
+        }
+        // Reset for next cycle
+        fsm.phase = 'down'
+        fsm.lastValley = a
+        fsm.lastPeak = undefined
+      }
+    }
+
+    lastStateRef.current = state
   }
 
   const openWebcam = async () => {
@@ -509,14 +579,11 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     stateChangeTimestampRef.current = 0
     angleFiltersRef.current.clear()
     angleHistoryRef.current = []
-    
-    minAngleSeenRef.current = 180
-    maxAngleSeenRef.current = 0
-    hasLearnedThresholdsRef.current = false
-    flexedThresholdRef.current = 90
-    extendedThresholdRef.current = 140
+    setRepDetails([])
+    repFSMRef.current = { phase: 'idle' }
   }
 
+  // NEW: Stop test mode
   const stopTestMode = () => {
     if (videoRef.current) {
       videoRef.current.pause()
@@ -538,12 +605,8 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     stateChangeTimestampRef.current = 0
     angleFiltersRef.current.clear()
     angleHistoryRef.current = []
-    
-    minAngleSeenRef.current = 180
-    maxAngleSeenRef.current = 0
-    hasLearnedThresholdsRef.current = false
-    flexedThresholdRef.current = 90
-    extendedThresholdRef.current = 140
+    setRepDetails([])
+    repFSMRef.current = { phase: 'idle' }
   }
 
   const initPose = async () => {
@@ -955,15 +1018,67 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
 
   return (
     <Card className="p-6 space-y-4">
+      <div className="flex gap-3">
+        <Button onClick={openWebcam} disabled={isStreaming || isLoading} className="gap-2">
+          {isLoading ? "Opening…" : "Open Webcam"}
+        </Button>
+        
+        {enableTestMode && !isStreaming && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*"
+              onChange={handleTestVideoUpload}
+              className="hidden"
+            />
+            <Button 
+              onClick={() => fileInputRef.current?.click()} 
+              disabled={isLoading}
+              variant="outline"
+              className="gap-2"
+            >
+              {isLoading ? "Loading…" : "test with Video File"}
+            </Button>
+          </>
+        )}
+        {testMode && isStreaming && (
+          <>
+            <Button onClick={togglePlayPause} variant="outline">
+              {isPlaying ? "Pause" : "▶ Play"}
+            </Button>
+            <Button onClick={resetTestVideo} variant="outline">
+              Reset
+            </Button>
+            <Button onClick={stopTestMode} variant="destructive">
+              Stop Test
+            </Button>
+          </>
+        )}
+      </div>
 
+      {testMode && testVideoFile && (
+        <div className="bg-yellow-50 dark:bg-yellow-950 border-2 border-yellow-500 rounded-lg p-3">
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <div className="font-semibold text-yellow-900 dark:text-yellow-100">
+                Test Mode Active
+              </div>
+              <div className="text-sm text-yellow-700 dark:text-yellow-300">
+                Testing: {testVideoFile.name}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <div className="relative rounded-lg overflow-hidden bg-black">
+      <div className="relative w-full bg-black rounded-lg overflow-hidden" style={{ aspectRatio: 'auto' }}>
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="w-full h-auto block"
+          className="w-full h-auto"
         />
         <canvas
           ref={canvasRef}
@@ -973,12 +1088,13 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         {isStreaming && (
           <>
 
-            <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-3 py-2 border border-green-500">
-              <div className="text-xs text-green-400 font-semibold mb-0.5">REPS</div>
-              <div className="text-3xl font-bold text-white">{repCount}</div>
-              {!hasLearnedThresholdsRef.current && angleHistoryRef.current.length < 60 && (
-                <div className="text-xs text-yellow-400 mt-1">Learning...</div>
-              )}
+            <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-4 border-2 border-green-500">
+              <div className="text-sm text-green-400 font-semibold mb-1">REPS</div>
+              <div className="text-5xl font-bold text-white">{repCount}</div>
+              {/* <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded bg-green-600/30 px-2 py-1 text-green-200 border border-green-500/60">✔ correct: {correctRepCount}</div>
+                <div className="rounded bg-red-600/30 px-2 py-1 text-red-200 border border-red-500/60">✖ incorrect: {incorrectRepCount}</div>
+              </div> */}
             </div>
             
 
@@ -1028,23 +1144,23 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
               </div>
             )}
 
-            {learnedTemplateRef.current && errorFeedback && (
-              <div className={`absolute bottom-24 left-1/2 transform -translate-x-1/2 bg-black/80 backdrop-blur-sm rounded-lg px-4 py-2 border ${
-                currentRepError && currentRepError.overallError < 10 
-                  ? 'border-green-500 text-green-400' 
-                  : currentRepError && currentRepError.overallError < 20
-                  ? 'border-yellow-500 text-yellow-400'
-                  : 'border-red-500 text-red-400'
-              }`}>
-                <div className="text-center">
-                  <h4 className="font-bold text-xl mb-0.5 whitespace-nowrap">
-                    {errorFeedback}
-                  </h4>
-                  {currentRepError && (
-                    <div className="text-sm text-white/90">
-                      Error: {currentRepError.overallError.toFixed(1)}°
+            {repDetails.length > 0 && (
+              <div className="absolute bottom-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg p-4 border-2 border-emerald-500">
+                <div className="text-sm text-emerald-400 font-semibold mb-2">REP DETAILS</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-48 overflow-auto pr-1">
+                  {repDetails.map(rep => (
+                    <div key={rep.index} className="flex items-center justify-between gap-3">
+                      <div className="text-white text-sm">
+                        <span className="font-semibold">#{rep.index}</span>
+                        <span className="ml-2 text-gray-300">{rep.primaryAngle.replace(/_/g, ' ')}</span>
+                        <span className="ml-2">min <span className="font-bold">{rep.minAngle}°</span></span>
+                        <span className="ml-2">max <span className="font-bold">{rep.maxAngle}°</span></span>
+                      </div>
+                      <div className={rep.correct ? "px-2 py-1 rounded bg-green-600/40 text-green-200 border border-green-500/60 text-xs" : "px-2 py-1 rounded bg-red-600/40 text-red-200 border border-red-500/60 text-xs"}>
+                        {rep.correct ? "✔ correct" : "✖ incorrect"}
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
             )}
