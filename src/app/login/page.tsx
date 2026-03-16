@@ -1,47 +1,44 @@
 "use client";
 
 import { useState } from "react";
+import { supabase } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
 
-export default function SignupPage() {
+export default function LoginPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("patient");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSignup = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
-    const res = await fetch("/api/auth/signup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, role }),
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
 
-    const data = await res.json();
     setLoading(false);
 
-    if (!res.ok) {
-      setError(data.error || "Signup failed");
+    if (signInError) {
+      setError(signInError.message);
       return;
     }
 
-    router.push("/login");
+    router.push("/");
+    router.refresh();
   };
 
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
-        <h2 style={{ textAlign: "center", marginBottom: "20px" }}>
-          Create Account
-        </h2>
+        <h2 style={{ textAlign: "center", marginBottom: "20px" }}>Log In</h2>
 
-        <form onSubmit={handleSignup}>
+        <form onSubmit={handleLogin}>
           <input
             type="email"
             placeholder="Enter Email"
@@ -60,19 +57,6 @@ export default function SignupPage() {
             style={inputStyle}
           />
 
-          <label style={{ fontSize: "14px", marginTop: "10px", display: "block" }}>
-            Select Role
-          </label>
-
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="patient">Patient</option>
-            <option value="doctor">Doctor</option>
-          </select>
-
           {error && (
             <p style={{ color: "red", fontSize: "13px", marginTop: "8px" }}>
               {error}
@@ -80,14 +64,14 @@ export default function SignupPage() {
           )}
 
           <button type="submit" disabled={loading} style={buttonStyle}>
-            {loading ? "Creating Account..." : "Sign Up"}
+            {loading ? "Logging in..." : "Log In"}
           </button>
         </form>
 
         <p style={{ textAlign: "center", marginTop: "15px", fontSize: "14px" }}>
-          Already have an account?{" "}
-          <a href="/login" style={{ color: "#0070f3" }}>
-            Log in
+          Don&apos;t have an account?{" "}
+          <a href="/signup" style={{ color: "#0070f3" }}>
+            Sign up
           </a>
         </p>
       </div>

@@ -1,4 +1,4 @@
-import { createClient } from "@/utils/supabase/client"
+import { supabase } from "@/utils/supabase/client"
 import type { LearnedExerciseTemplate } from "./exercise-state-learner"
 
 export interface ExerciseVideo {
@@ -46,8 +46,6 @@ export async function saveExerciseVideo(
   console.log(`Saving exercise video: ${name} (${exerciseType})`)
   
   try {
-    const supabase = createClient()
-    
     const fileName = `${id}_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.webm`
     const filePath = `${exerciseType}/${fileName}`
     
@@ -128,8 +126,6 @@ export async function deleteExercise(id: string): Promise<boolean> {
   
   if (videoToDelete.storedInSupabase) {
     try {
-      const supabase = createClient()
-      
       // Extract file path from URL
       const url = new URL(videoToDelete.videoUrl)
       const pathParts = url.pathname.split('/storage/v1/object/public/' + SUPABASE_BUCKET + '/')

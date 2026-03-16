@@ -32,11 +32,10 @@ export async function POST(req: Request) {
     const userId = user?.id
     if (!userId) return NextResponse.json({ error: "No user id returned from auth" }, { status: 500 })
 
-    // insert into users table (application profile)
-    const { error: insertUserError } = await supabase.from("users").insert([{ id: userId, email, role }])
-    if (insertUserError) {
-      return NextResponse.json({ error: insertUserError.message }, { status: 500 })
-    }
+    // ROHA TO MANAIL 
+    // there's no manual insert in users because i created a trigger
+    // any row created in auth.users will trigger a new row being created in public.users
+
 
     // Insert minimal role-specific row. Migration/schema expects some non-null columns; use empty strings as placeholders.
     if (role === "patient") {
