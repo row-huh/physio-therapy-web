@@ -12,10 +12,9 @@ export interface ComparisonResult {
   }
 }
 
-/**
- * Compare two learned exercise templates and return a similarity score.
- * Score = (stateSimilarity × 0.6) + (angleAccuracy × 0.4)
- */
+
+// Compare two learned exercise templates and return a similarity score.
+// Score = (stateSimilarity × 0.6) + (angleAccuracy × 0.4)
 export function compareTemplates(
   reference: LearnedExerciseTemplate,
   uploaded: LearnedExerciseTemplate

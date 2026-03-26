@@ -1,3 +1,4 @@
+// ROHA to ROHA
 /**
  * Exercise State Learner
  * 
@@ -8,6 +9,8 @@
  * 4. Hold durations
  * 
  * This creates a dynamic template that can be used for comparison.
+ * 
+ * 
  */
 
 import type { JointAngle } from "./pose-analyzer"

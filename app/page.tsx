@@ -11,7 +11,7 @@ import { getAllExercises, deleteExercise, type ExerciseVideo } from "@/lib/stora
 // will connect with supabase later after setting up user profiles and auth
 
 export default function Home() {
-  const [exercises, setExercises] = useState<ExerciseVideo[]>([])
+  const [exercises, setExercises] = useState<ExerciseVideo[]>([]) 
   const [step, setStep] = useState<"list" | "create">("list")
 
   useEffect(() => {
