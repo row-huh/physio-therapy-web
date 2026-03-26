@@ -8,26 +8,11 @@ import { getExercise } from "@/lib/storage"
 import { analyzeVideoForPose } from "@/lib/pose-analyzer"
 import { getExerciseConfig } from "@/lib/exercise-config"
 import type { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
+import { compareTemplates, type ComparisonResult } from "@/lib/comparison"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { Upload, Loader2, CheckCircle2, XCircle, Video } from "lucide-react"
 import { ComparisonRecorder } from "@/components/comparison-recorder"
-
-
-
-interface ComparisonResult {
-
-  similarity: number
-  referenceReps: number
-  uploadedReps: number
-  details: {
-    referenceTemplate: LearnedExerciseTemplate
-    uploadedTemplate: LearnedExerciseTemplate
-    stateMatches: { [key: string]: number }
-    angleDeviations: { [key: string]: number }
-  }
-
-}
 
 
 
@@ -146,91 +131,6 @@ export default function ComparePage() {
     } finally {
       setIsAnalyzing(false)
     }
-  }
-
-
-  const compareTemplates = (
-    reference: LearnedExerciseTemplate,
-    uploaded: LearnedExerciseTemplate
-  ): ComparisonResult => {
-    const stateMatches: { [key: string]: number } = {}
-    const angleDeviations: { [key: string]: number } = {}
-
-
-
-    reference.states.forEach((refState) => {
-      const closestMatch = uploaded.states.reduce((best, upState) => {
-        const similarity = calculateStateSimilarity(refState, upState)
-        return similarity > best.similarity ? { state: upState, similarity } : best
-      }, { state: uploaded.states[0], similarity: 0 })
-
-
-      stateMatches[refState.name] = closestMatch.similarity
-    })
-
-
-    const allAngles = new Set<string>()
-    reference.states.forEach(s =>
-      Object.keys(s.angleRanges).forEach(angle => allAngles.add(angle))
-    )
-
-
-    allAngles.forEach(angleName => {
-      const refAngles = reference.states
-        .map(s => s.angleRanges[angleName]?.mean)
-        .filter(a => a !== undefined) as number[]
-      const upAngles = uploaded.states
-        .map(s => s.angleRanges[angleName]?.mean)
-        .filter(a => a !== undefined) as number[]
-
-
-      if (refAngles.length > 0 && upAngles.length > 0) {
-        const refAvg = refAngles.reduce((a, b) => a + b, 0) / refAngles.length
-        const upAvg = upAngles.reduce((a, b) => a + b, 0) / upAngles.length
-        angleDeviations[angleName] = Math.abs(refAvg - upAvg)
-      }
-    })
-
-
-    const stateSimilarity = Object.values(stateMatches).reduce((a, b) => a + b, 0) / Object.values(stateMatches).length
-    const angleAccuracy = 100 - Math.min(100,
-      Object.values(angleDeviations).reduce((a, b) => a + b, 0) / Object.values(angleDeviations).length
-    )
-    const overallSimilarity = (stateSimilarity * 0.6 + angleAccuracy * 0.4)
-
-
-    return {
-      similarity: Math.round(overallSimilarity),
-      referenceReps: reference.recommendedReps,
-      uploadedReps: uploaded.recommendedReps,
-      details: {
-        referenceTemplate: reference,
-        uploadedTemplate: uploaded,
-        stateMatches,
-        angleDeviations,
-      }
-    }
-  }
-
-
-  const calculateStateSimilarity = (state1: any, state2: any): number => {
-    const angles1 = Object.keys(state1.angleRanges)
-    const angles2 = Object.keys(state2.angleRanges)
-    const commonAngles = angles1.filter(a => angles2.includes(a))
-
-
-    if (commonAngles.length === 0) return 0
-
-
-    const similarities = commonAngles.map(angle => {
-      const mean1 = state1.angleRanges[angle].mean
-      const mean2 = state2.angleRanges[angle].mean
-      const diff = Math.abs(mean1 - mean2)
-      return Math.max(0, 100 - (diff / 180) * 100)
-    })
-
-
-    return similarities.reduce((a, b) => a + b, 0) / similarities.length
   }
 
 
