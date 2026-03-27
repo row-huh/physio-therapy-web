@@ -1,4 +1,6 @@
 
+// ROHA to ROHA: perhaps have learnt exercise templates stored locally and only store metrics?
+
 
 import type { LearnedExerciseTemplate } from "./exercise-state-learner"
 
