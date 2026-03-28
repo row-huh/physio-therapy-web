@@ -3,10 +3,13 @@ import { createClient } from "@supabase/supabase-js"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  // allow build to succeed but runtime will error if env missing
   console.warn("Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
+}
+if (!supabaseServiceKey) {
+  console.warn("Missing SUPABASE_SERVICE_ROLE_KEY — role/profile inserts will fail")
 }
 
 export async function POST(req: Request) {
@@ -23,6 +26,10 @@ export async function POST(req: Request) {
     }
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey)
+    // Service role client bypasses RLS — used for DB writes only
+    const supabaseAdmin = supabaseServiceKey
+      ? createClient(supabaseUrl, supabaseServiceKey)
+      : supabase
 
     console.log(`[signup] Attempting signup for ${email} as ${role}`)
 
@@ -49,13 +56,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Invalid role "${role}". Must be "patient" or "doctor"` }, { status: 400 })
     }
 
-    const { error: updateErr } = await supabase
+    // Set role on the users row created by the trigger
+    const { error: updateErr } = await supabaseAdmin
       .from("users")
       .update({ role })
       .eq("id", userId)
     if (updateErr) {
       console.error(`[signup] Failed to set role on users row:`, updateErr.message, updateErr.details)
       return NextResponse.json({ error: `Account created but role update failed: ${updateErr.message}` }, { status: 500 })
+    }
+
+    // Create the role-specific profile row (id FK → users.id)
+    const table = role === "patient" ? "patients" : "doctors"
+    const { error: insertErr } = await supabaseAdmin
+      .from(table)
+      .insert({ id: userId })
+    if (insertErr) {
+      console.error(`[signup] Failed to insert ${table} row:`, insertErr.message, insertErr.details)
+      return NextResponse.json({ error: `Account created but ${table} profile failed: ${insertErr.message}` }, { status: 500 })
     }
 
     console.log(`[signup] Success: ${email} registered as ${role}`)
