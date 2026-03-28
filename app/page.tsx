@@ -6,10 +6,6 @@ import { Card } from "@/components/ui/card"
 import Link from "next/link"
 import { getAllExercises, deleteExercise, type ExerciseVideo } from "@/lib/storage"
 
-
-// storing learnt states in usestate for now 
-// will connect with supabase later after setting up user profiles and auth
-
 export default function Home() {
   const [exercises, setExercises] = useState<ExerciseVideo[]>([]) 
 
@@ -31,10 +27,8 @@ export default function Home() {
               <p className="text-muted-foreground">Proof of Concept</p>
             </div>
 
-            <Button size="lg" className="w-full">
-              <Link href={"/record"}>
-              Record New Exercise
-              </Link>    
+            <Button asChild size="lg" className="w-full">
+              <Link href="/record">Record New Exercise</Link>
             </Button>
 
             {exercises.length === 0 ? (

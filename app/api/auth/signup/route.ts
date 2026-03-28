@@ -22,23 +22,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Server missing Supabase config" }, { status: 500 })
     }
 
-
     const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
     const { data: signData, error: signError } = await supabase.auth.signUp({ email, password })
     if (signError) return NextResponse.json({ error: signError.message }, { status: 400 })
 
-    // signData.user may be undefined in some flows (depending on confirmation)
-    const user = (signData as any)?.user || (signData as any)
-    const userId = user?.id
+    // The users table is populated automatically via a DB trigger on auth.users.
+    const userId = signData?.user?.id
     if (!userId) return NextResponse.json({ error: "No user id returned from auth" }, { status: 500 })
 
-    // ROHA TO MANAIL 
-    // there's no manual insert in users because i created a trigger
-    // any row created in auth.users will trigger a new row being created in public.users
-
-
-    // Insert minimal role-specific row. Migration/schema expects some non-null columns; use empty strings as placeholders.
     if (role === "patient") {
       await supabase.from("patients").insert([{ auth_id: userId, name: "", email, phone_number: "" }])
     } else if (role === "doctor") {

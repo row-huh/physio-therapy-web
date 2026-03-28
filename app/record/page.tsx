@@ -11,6 +11,7 @@ import { saveExerciseVideo } from "@/lib/storage"
 import { saveTemplate } from "@/lib/template-storage"
 import { analyzeVideoForPose, type PoseAnalysisResult } from "@/lib/pose-analyzer"
 import { EXERCISE_CONFIGS, getExerciseConfig } from "@/lib/exercise-config"
+import { formatAngleName } from "@/lib/utils"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 
@@ -46,46 +47,27 @@ export default function RecordPage() {
   const handleSave = async () => {
     if (recordedBlob) {
       setIsAnalyzing(true)
-      
+
       try {
-        console.log("Starting video analysis...")
-        
         // Get angles of interest for the selected exercise type
-        // for knee exercises, the only angles of interest are legs so you skip calculation for all the other angles to save compute tiem
         const exerciseConfig = getExerciseConfig(exerciseType)
         const anglesOfInterest = exerciseConfig?.anglesOfInterest
-        
-        console.log(`Analyzing for exercise: ${exerciseConfig?.name}`)
-        console.log(`Angles of interest:`, anglesOfInterest)
-        
-        // Pass exercise info for state learning
-        // state learning works with k means clustering to group some specific angles in states
+
         const exerciseInfo = {
           name: exerciseName.trim() || exerciseConfig?.name || "exercise",
           type: exerciseType,
         }
-        
+
         const result = await analyzeVideoForPose(
-          recordedBlob, 
+          recordedBlob,
           anglesOfInterest,
           exerciseInfo
         )
         setAnalysisResult(result)
-        
-        console.log("Analysis complete!")
-        console.log("Joint Angles:", result.jointAngles)
-        console.log("Movements:", result.movements)
-        console.log("Summary:\n", result.summary)
-        
-        if (result.learnedTemplate) {
-          console.log("Learned Template:", result.learnedTemplate)
-        }
-        
+
         const videoName = exerciseName.trim() || exerciseConfig?.name || "exercise"
         await saveExerciseVideo(videoName, recordedBlob, exerciseType, result.learnedTemplate)
-        
-        console.log("Video saved successfully!")
-        
+
       } catch (error) {
         console.error("Error analyzing video:", error)
         alert(`Error analyzing video: ${error instanceof Error ? error.message : "Unknown error"}`)
@@ -129,7 +111,7 @@ export default function RecordPage() {
                 <div className="text-xs text-muted-foreground mt-2">
                   <strong>Tracked angles:</strong>{" "}
                   {getExerciseConfig(exerciseType)
-                    ?.anglesOfInterest.map((a: string) => a.replace("_", " "))
+                    ?.anglesOfInterest.map(formatAngleName)
                     .join(", ")}
                 </div>
               </div>
@@ -160,7 +142,7 @@ export default function RecordPage() {
               <div className="mt-2 text-sm bg-muted p-3 rounded-lg">
                 <strong>Tracking:</strong>{" "}
                 {getExerciseConfig(exerciseType)
-                  ?.anglesOfInterest.map((a) => a.replace("_", " ").toUpperCase())
+                  ?.anglesOfInterest.map((a) => formatAngleName(a).toUpperCase())
                   .join(", ")}
               </div>
             </div>
@@ -244,7 +226,7 @@ export default function RecordPage() {
                   </h3>
                   <p className="text-sm text-muted-foreground">
                     Analyzed joints: {getExerciseConfig(exerciseType)
-                      ?.anglesOfInterest.map((a) => a.replace("_", " "))
+                      ?.anglesOfInterest.map(formatAngleName)
                       .join(", ")}
                   </p>
                 </Card>
@@ -260,8 +242,7 @@ export default function RecordPage() {
                   <LearnedTemplateView 
                     template={analysisResult.learnedTemplate}
                     onSaveTemplate={() => {
-                      const templateId = saveTemplate(analysisResult.learnedTemplate!, recordedBlob)
-                      console.log("Saved template with ID:", templateId)
+                      saveTemplate(analysisResult.learnedTemplate!, recordedBlob)
                       alert(`Template saved! You can now use "${analysisResult.learnedTemplate!.exerciseName}" as a reference for comparisons.`)
                     }}
                   />

@@ -14,7 +14,7 @@ interface ComparisonRecorderProps {
   anglesOfInterest?: string[]
   exerciseName?: string
   exerciseType?: string
-  enableTestMode?: boolean // doing dis to test it on uploaded videos (because why would i perform knee extensions every 3 secs like an idiot)
+  enableTestMode?: boolean
 } 
 
 const POSE_LANDMARKS = {
