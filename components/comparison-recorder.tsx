@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card"
 import { RepErrorGraph } from "@/components/rep-error-graph"
 import { calculateRepError, analyzeRepTrends, getErrorFeedback, type RepError, type RepErrorSummary } from "@/lib/rep-error-calculator"
 import { OneEuroFilter } from "@/lib/filters"
-
+import { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
 
 interface ComparisonRecorderProps {
   onVideoRecorded?: (videoBlob: Blob) => void
@@ -15,7 +15,7 @@ interface ComparisonRecorderProps {
   exerciseName?: string
   exerciseType?: string
   enableTestMode?: boolean // doing dis to test it on uploaded videos (because why would i perform knee extensions every 3 secs like an idiot)
-}
+} 
 
 const POSE_LANDMARKS = {
   NOSE: 0,
@@ -56,6 +56,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const streamRef = useRef<MediaStream | null>(null)
   const poseRef = useRef<PoseLandmarker | null>(null)
   const rafRef = useRef<number | null>(null)
+  const learnedTemplateRef = useRef<LearnedExerciseTemplate | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
