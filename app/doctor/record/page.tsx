@@ -1,8 +1,3 @@
-// subject to refactor
-// should move this out of the way and connect to doctor's dashboard. 
-// maybe it's better to turn it into a component? Gah idk - crossing that bridge when i get there
-
-
 "use client"
 
 import { useState, useRef } from "react"
@@ -85,7 +80,7 @@ export default function RecordPage() {
   return (
     <main className="min-h-screen bg-background p-8">
       <div className="max-w-2xl mx-auto space-y-6">
-        <Link href="/">
+        <Link href="/doctor">
           <Button variant="outline">Back</Button>
         </Link>
 
@@ -244,7 +239,7 @@ export default function RecordPage() {
                 />
 
                 {analysisResult.learnedTemplate && (
-                  <LearnedTemplateView 
+                  <LearnedTemplateView
                     template={analysisResult.learnedTemplate}
                     onSaveTemplate={() => {
                       saveTemplate(analysisResult.learnedTemplate!, recordedBlob)
@@ -255,11 +250,11 @@ export default function RecordPage() {
 
                 <Button
                   onClick={() => {
-                    router.push("/")
+                    router.push("/doctor")
                   }}
                   className="w-full"
                 >
-                  Go to Home
+                  Back to Dashboard
                 </Button>
               </div>
             )}
