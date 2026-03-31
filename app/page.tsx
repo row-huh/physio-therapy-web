@@ -67,15 +67,15 @@ export default function Home() {
     )
   }
 
-  // Signed in — redirect to role page
-  if (role === "doctor") {
-    router.replace("/doctor")
-    return null
-  }
-  if (role === "patient") {
-    router.replace("/patient")
-    return null
-  }
+  // editing usestate was causnig problems (infinite renders)
+  // so switched to useeffect
+  useEffect(() => {
+    if (role === "patient") {
+      router.replace("/patient")
+    } else if (role === "doctor") {
+      router.replace("/doctor")
+    }
+  }, [role, router])
 
-  return null
+  return null  
 }
