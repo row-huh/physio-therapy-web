@@ -1,3 +1,8 @@
+// subject to refactor
+// should move this out of the way and connect to doctor's dashboard. 
+// maybe it's better to turn it into a component? Gah idk - crossing that bridge when i get there
+
+
 "use client"
 
 import { useState, useRef } from "react"

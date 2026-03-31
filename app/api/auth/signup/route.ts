@@ -12,6 +12,15 @@ if (!supabaseServiceKey) {
   console.warn("Missing SUPABASE_SERVICE_ROLE_KEY — role/profile inserts will fail")
 }
 
+function generateDoctorCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O/1/I to avoid confusion
+  let code = "DR-"
+  for (let i = 0; i < 4; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return code
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json()
