@@ -3,6 +3,13 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { RecordExercise } from "@/components/record-exercise"
 import { supabase } from "@/utils/supabase/client"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -21,6 +28,7 @@ export default function DoctorPage() {
   const [copied, setCopied] = useState(false)
   const [patients, setPatients] = useState<LinkedPatient[]>([])
   const [patientsLoading, setPatientsLoading] = useState(true)
+  const [assignPatient, setAssignPatient] = useState<LinkedPatient | null>(null)
 
   useEffect(() => {
     async function loadDoctor() {
@@ -43,11 +51,12 @@ export default function DoctorPage() {
 
       setDoctorCode(data?.doctor_code ?? null)
 
-      // Fetch linked patients
       const { data: patientRows, error: patientsErr } = await supabase
         .from("patients")
         .select("id")
         .eq("doctor_id", session.user.id)
+
+      console.log(patientRows)
 
       if (patientsErr) {
         console.error("[doctor] Failed to fetch patients:", patientsErr.message)
@@ -146,6 +155,13 @@ export default function DoctorPage() {
                             {p.email}
                           </p>
                         </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setAssignPatient(p)}
+                        >
+                          Assign Exercise
+                        </Button>
                       </Card>
                     )
                   })}
@@ -158,6 +174,29 @@ export default function DoctorPage() {
           </div>
         )}
       </div>
+
+      {/* Assign Exercise Dialog */}
+      <Dialog
+        open={assignPatient !== null}
+        onOpenChange={(open) => { if (!open) setAssignPatient(null) }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Assign Exercise to{" "}
+              {assignPatient
+                ? [assignPatient.firstName, assignPatient.lastName].filter(Boolean).join(" ") || assignPatient.email
+                : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {assignPatient && (
+            <RecordExercise
+              onComplete={() => setAssignPatient(null)}
+              doneLabel="Done"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
