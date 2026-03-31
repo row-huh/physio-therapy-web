@@ -2,22 +2,88 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { supabase } from "@/utils/supabase/client"
 import { useRouter } from "next/navigation"
 
 export default function PatientPage() {
   const router = useRouter()
   const [email, setEmail] = useState<string | null>(null)
+  const [doctorName, setDoctorName] = useState<string | null>(null)
+  const [hasDoctor, setHasDoctor] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  // Link form state
+  const [codeInput, setCodeInput] = useState("")
+  const [linkError, setLinkError] = useState("")
+  const [linking, setLinking] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    async function loadPatient() {
+      const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         router.replace("/login")
         return
       }
       setEmail(session.user.email ?? null)
-    })
+
+      // Fetch patient's doctor_id
+      const { data: patient } = await supabase
+        .from("patients")
+        .select("doctor_id")
+        .eq("id", session.user.id)
+        .single()
+
+      if (patient?.doctor_id) {
+        // Fetch linked doctor's name
+        const { data: doctor } = await supabase
+          .from("doctors")
+          .select("name")
+          .eq("id", patient.doctor_id)
+          .single()
+
+        setDoctorName(doctor?.name ?? "your doctor")
+        setHasDoctor(true)
+      }
+
+      setLoading(false)
+    }
+    loadPatient()
   }, [router])
+
+  const handleLinkDoctor = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLinkError("")
+    setLinking(true)
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      setLinkError("Session expired. Please log in again.")
+      setLinking(false)
+      return
+    }
+
+    const res = await fetch("/api/patient/link-doctor", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ doctor_code: codeInput }),
+    })
+
+    const data = await res.json()
+    setLinking(false)
+
+    if (!res.ok) {
+      setLinkError(data.error || "Failed to link doctor")
+      return
+    }
+
+    setDoctorName(data.doctor_name ?? "your doctor")
+    setHasDoctor(true)
+    setCodeInput("")
+  }
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -34,7 +100,42 @@ export default function PatientPage() {
         </div>
       </div>
       <div className="p-8">
-        <p className="text-muted-foreground">Patient page — coming soon.</p>
+        {loading ? (
+          <p className="text-muted-foreground">Loading...</p>
+        ) : hasDoctor ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border p-6 max-w-md">
+              <p className="text-sm text-muted-foreground mb-1">Linked to</p>
+              <p className="text-lg font-semibold">{doctorName}</p>
+            </div>
+            <p className="text-muted-foreground">
+              Your doctor hasn&apos;t added any exercises yet.
+            </p>
+          </div>
+        ) : (
+          <div className="max-w-sm space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold">Link to your Doctor</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Enter the code your doctor gave you to get started.
+              </p>
+            </div>
+            <form onSubmit={handleLinkDoctor} className="flex gap-2">
+              <Input
+                placeholder="e.g. DR-A7X3"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value)}
+                required
+              />
+              <Button type="submit" disabled={linking}>
+                {linking ? "Linking..." : "Link"}
+              </Button>
+            </form>
+            {linkError && (
+              <p className="text-sm text-destructive">{linkError}</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
