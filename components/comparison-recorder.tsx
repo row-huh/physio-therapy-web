@@ -65,6 +65,9 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const [correctRepCount, setCorrectRepCount] = useState(0)
   const [incorrectRepCount, setIncorrectRepCount] = useState(0)
   const [currentState, setCurrentState] = useState<string>("")
+  const [templateState, setTemplateState] = useState<string>("")
+  const [repErrors, setRepErrors] = useState<RepError[]>([])
+  const [errorSummary, setErrorSummary] = useState<RepErrorSummary | null>(null)
   const [repDetails, setRepDetails] = useState<Array<{
     index: number
     startTime: number
@@ -76,6 +79,10 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   }>>([])
   
 
+  const [formScore, setFormScore] = useState<number>(0)
+  const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
+  const [errorFeedback, setErrorFeedback] = useState<string>("")
+  const [templateName, setTemplateName] = useState<string>("")
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -87,6 +94,13 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const lastStateRef = useRef<string>("")
   const hasVisitedPeakRef = useRef(false)
   const lastExtendedTimestampRef = useRef<number | null>(null)
+  const stateChangeTimestampRef = useRef<number>(0)
+  const minAngleSeenRef = useRef<number>(Infinity)
+  const maxAngleSeenRef = useRef<number>(-Infinity)
+  const hasLearnedThresholdsRef = useRef<boolean>(false)
+  const templateLastStateRef = useRef<string>("")
+  const templateLastChangeTsRef = useRef<number>(0)
+  const templateVisitedPeakRef = useRef<boolean>(false)
   const lastRepTimestampRef = useRef<number | null>(null)
   const MIN_EXTENDED_HOLD = 0.2 // seconds to hold extended before a rep can be counted
   const MIN_REP_COOLDOWN = 0.6   // seconds between reps to avoid initial extra and double counts
@@ -334,7 +348,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
     // state detection then knows what to look for
     if (angle < 70) {
       return "flexed"
-    } else if (angle > extendedThreshold) {
+    } else if (angle > 150) {
       return "extended"
     } else {
       return "transition"
@@ -707,7 +721,7 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           stateLabel = state
           if (state) {
             setCurrentState(state)
-            updateRepCount(state, ts / 1000)
+            updateRepCount(state)
           }
         }
 
