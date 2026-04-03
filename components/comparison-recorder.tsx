@@ -15,6 +15,9 @@ interface ComparisonRecorderProps {
   exerciseName?: string
   exerciseType?: string
   enableTestMode?: boolean
+  referenceTemplate?: LearnedExerciseTemplate
+  idealTemplate?: LearnedExerciseTemplate
+  allowProgression?: boolean
 } 
 
 const POSE_LANDMARKS = {
@@ -50,7 +53,7 @@ interface JointAngleData {
   [key: string]: number
 }
 
-export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exerciseName, exerciseType, enableTestMode = false }: ComparisonRecorderProps) {
+export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exerciseName, exerciseType, enableTestMode = false, referenceTemplate, idealTemplate, allowProgression = true }: ComparisonRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -83,6 +86,11 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
   const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
   const [errorFeedback, setErrorFeedback] = useState<string>("")
   const [templateName, setTemplateName] = useState<string>("")
+  // Dual-threshold live feedback
+  const [liveThresholdStatus, setLiveThresholdStatus] = useState<"below" | "valid" | "good">("below")
+  const [livePrimaryAngle, setLivePrimaryAngle] = useState<number | null>(null)
+  const [liveValidReps, setLiveValidReps] = useState(0)
+  const [liveGoodReps, setLiveGoodReps] = useState(0)
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -740,10 +748,40 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
           setErrorFeedback(getErrorFeedback(realtimeError))
         }
 
+        // ── Dual-threshold live feedback ──
+        if (referenceTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
+          const primaryName = anglesOfInterest[0]
+          const primaryVal = smoothedAngles[primaryName]
+          if (primaryVal !== undefined) {
+            setLivePrimaryAngle(primaryVal)
+            // Extract reference peak
+            let refPeak = 0
+            for (const s of referenceTemplate.states) {
+              const r = s.angleRanges[primaryName]
+              if (r && r.mean > refPeak) refPeak = r.mean
+            }
+            // Extract ideal peak
+            const effectiveIdeal = allowProgression && idealTemplate ? idealTemplate : referenceTemplate
+            let idealPeak = 0
+            for (const s of effectiveIdeal.states) {
+              const r = s.angleRanges[primaryName]
+              if (r && r.mean > idealPeak) idealPeak = r.mean
+            }
+            const TOLERANCE = 0.9
+            if (primaryVal >= idealPeak * TOLERANCE) {
+              setLiveThresholdStatus("good")
+            } else if (primaryVal >= refPeak * TOLERANCE) {
+              setLiveThresholdStatus("valid")
+            } else {
+              setLiveThresholdStatus("below")
+            }
+          }
+        }
+
         if (anglesOfInterest && anglesOfInterest.length > 0) {
           updateRepCountFromSignal()
         }
-        
+
         drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
           color: "#22c55e",
           lineWidth: 8,
@@ -1041,13 +1079,40 @@ export function ComparisonRecorder({ onVideoRecorded, anglesOfInterest, exercise
         {isStreaming && (
           <>
 
-            <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-4 border-2 border-green-500">
-              <div className="text-sm text-green-400 font-semibold mb-1">REPS</div>
+            <div className={`absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-4 border-2 ${
+              referenceTemplate
+                ? liveThresholdStatus === "good"
+                  ? "border-green-500"
+                  : liveThresholdStatus === "valid"
+                    ? "border-yellow-500"
+                    : "border-red-500"
+                : "border-green-500"
+            }`}>
+              <div className={`text-sm font-semibold mb-1 ${
+                referenceTemplate
+                  ? liveThresholdStatus === "good"
+                    ? "text-green-400"
+                    : liveThresholdStatus === "valid"
+                      ? "text-yellow-400"
+                      : "text-red-400"
+                  : "text-green-400"
+              }`}>REPS</div>
               <div className="text-5xl font-bold text-white">{repCount}</div>
-              {/* <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded bg-green-600/30 px-2 py-1 text-green-200 border border-green-500/60">✔ correct: {correctRepCount}</div>
-                <div className="rounded bg-red-600/30 px-2 py-1 text-red-200 border border-red-500/60">✖ incorrect: {incorrectRepCount}</div>
-              </div> */}
+              {referenceTemplate && (
+                <div className="mt-2 text-[10px] space-y-0.5">
+                  <div className={`font-semibold ${
+                    liveThresholdStatus === "good"
+                      ? "text-green-400"
+                      : liveThresholdStatus === "valid"
+                        ? "text-yellow-400"
+                        : "text-red-400"
+                  }`}>
+                    {liveThresholdStatus === "good" ? "Ideal ROM reached" :
+                     liveThresholdStatus === "valid" ? "Reference ROM reached" :
+                     "Below reference"}
+                  </div>
+                </div>
+              )}
             </div>
             
 
