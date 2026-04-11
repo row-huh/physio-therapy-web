@@ -142,13 +142,14 @@ export class RealtimeFeedbackEngine {
     referenceTemplate: LearnedExerciseTemplate
     idealTemplate: LearnedExerciseTemplate | null
     anglesOfInterest: string[]
+    primaryAngleOverride?: string
   }) {
     this.exerciseType = opts.exerciseType
     this.allowProgression = opts.allowProgression
     this.referenceTemplate = opts.referenceTemplate
     this.idealTemplate = opts.idealTemplate
     this.anglesOfInterest = opts.anglesOfInterest
-    this.primaryAngle = opts.anglesOfInterest[0] ?? ""
+    this.primaryAngle = opts.primaryAngleOverride ?? opts.anglesOfInterest[0] ?? ""
 
     // Pre-compute reference/ideal peaks
     this.refPeak = 0
@@ -171,43 +172,56 @@ export class RealtimeFeedbackEngine {
     }
   }
 
-  // Call this every frame
+  // Call this every frame — self-contained, no external threshold needed
 
   tick(ctx: {
     now: number             // timestamp in seconds
     smoothedAngles: Record<string, number>
     repError: RepError | null
     formScore: number       // 0-100
-    repCount: number
-    thresholdStatus: "below" | "valid" | "good" | "rest"
   }): void {
-    const { now, smoothedAngles, repError, formScore, repCount, thresholdStatus } = ctx
+    const { now, smoothedAngles, repError, formScore } = ctx
     const phrases = EXERCISE_PHRASES[this.exerciseType] ?? DEFAULT_PHRASES
     const primaryVal = smoothedAngles[this.primaryAngle]
 
-    // Track rep peak within cycle
-    if (primaryVal !== undefined && primaryVal > this.repPeakReached) {
+    if (primaryVal === undefined) return
+
+    // Track rep peak within cycle (sticky — only goes up until reset)
+    if (primaryVal > this.repPeakReached) {
       this.repPeakReached = primaryVal
     }
 
-    // Phase transitions
+    // ── Compute threshold status internally ──────────────────────
+    const TOLERANCE = 0.9
     const midpoint = (this.refStart + this.refPeak) / 2
+    let status: "below" | "valid" | "good" | "rest" = "rest"
 
-    if (primaryVal !== undefined && primaryVal < midpoint && this.lastPhase === "active") {
+    if (primaryVal < midpoint) {
+      status = "rest"
+    } else {
+      // Use sticky peak for status (same logic as recorder's dual-threshold)
+      if (this.repPeakReached >= this.idealPeak * TOLERANCE) {
+        status = "good"
+      } else if (this.repPeakReached >= this.refPeak * TOLERANCE) {
+        status = "valid"
+      } else {
+        status = "below"
+      }
+    }
+
+    // ── Phase transitions ────────────────────────────────────────
+    if (primaryVal < midpoint && this.lastPhase === "active") {
       // Returning to rest → rep cycle complete
       this.onRepComplete(now, formScore, phrases)
-      this.repPeakReached = primaryVal ?? 0
+      this.repPeakReached = primaryVal
       this.lastPhase = "rest"
-    } else if (primaryVal !== undefined && primaryVal >= midpoint && this.lastPhase === "rest") {
+    } else if (primaryVal >= midpoint && this.lastPhase === "rest") {
       this.lastPhase = "active"
     }
 
     // Active-phase nudges 
-    if (this.lastPhase === "active" && primaryVal !== undefined) {
-      const TOLERANCE = 0.9
-
-      if (thresholdStatus === "below") {
-        // Not reaching reference yet
+    if (this.lastPhase === "active") {
+      if (status === "below") {
         const pctToRef = this.refPeak > this.refStart
           ? (primaryVal - this.refStart) / (this.refPeak - this.refStart)
           : 0
@@ -217,11 +231,9 @@ export class RealtimeFeedbackEngine {
         } else {
           this.emit("nudge-extend", now, "warning", phrases.extendMore)
         }
-      } else if (thresholdStatus === "valid" && this.allowProgression) {
-        // Reached reference but not ideal → encourage more
+      } else if (status === "valid" && this.allowProgression) {
         this.emit("nudge-further", now, "info", phrases.goFurther)
-      } else if (thresholdStatus === "good") {
-        // Reached ideal — brief praise
+      } else if (status === "good") {
         this.emit("nudge-hold", now, "success", phrases.niceHold)
       }
 
@@ -245,7 +257,7 @@ export class RealtimeFeedbackEngine {
             "warning",
             `Watch your ${readable(angleName)}`,
           )
-          break // only nag about the worst one per tick
+          break
         }
       }
     }

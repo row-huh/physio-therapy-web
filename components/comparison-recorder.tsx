@@ -125,10 +125,12 @@ export function ComparisonRecorder({
   const rafRef = useRef<number | null>(null)
   const learnedTemplateRef = useRef<LearnedExerciseTemplate | null>(null)
   const feedbackEngineRef = useRef<RealtimeFeedbackEngine | null>(null)
+  // Locked primary angle — resolved once, used everywhere in the session
+  const resolvedPrimaryRef = useRef<string | null>(null)
 
 
 
-  //-------- AUDIO SYSTEM (SMART FEEDBACK)---------
+  //AUDIO SYSTEM (SMART FEEDBACK)
 
   const lastAudioTimeRef = useRef<number>(0)     // cooldown tracker
   const lastSpokenRef = useRef<string>("")       // avoid repetition
@@ -158,13 +160,10 @@ export function ComparisonRecorder({
 
 
 
-  //------- UI STATE-----------
-
-  const [isStreaming, setIsStreaming] = useState(false)
+ const [isStreaming, setIsStreaming] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [language, setLanguage] = useState<"en" | "ur">("en")
 
-  // -----------EXERCISE TRACKING STATE----------
 
   const [currentAngles, setCurrentAngles] = useState<JointAngleData>({})
   const [repCount, setRepCount] = useState(0)
@@ -175,7 +174,7 @@ export function ComparisonRecorder({
   const [templateState, setTemplateState] = useState<string>("")
 
 
-  //--------ERROR & ANALYSIS STATE----------
+
 
   const [repErrors, setRepErrors] = useState<RepError[]>([])
   const [errorSummary, setErrorSummary] = useState<RepErrorSummary | null>(null)
@@ -192,7 +191,6 @@ export function ComparisonRecorder({
 
 
  
-  //-------- PERFORMANCE METRICS-----------
  
   const [formScore, setFormScore] = useState<number>(0)
   const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
@@ -201,7 +199,6 @@ export function ComparisonRecorder({
 
 
 
-  // ----------LIVE FEEDBACK SYSTEM----------
 
   const [liveThresholdStatus, setLiveThresholdStatus] =
     useState<"below" | "valid" | "good" | "rest">("rest")
@@ -215,7 +212,6 @@ export function ComparisonRecorder({
 
 
 
-  // ------------ TEST MODE STATE----------
 
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
@@ -246,14 +242,36 @@ export function ComparisonRecorder({
 
 
 
-  //-------- REP DETECTION CONSTANTS---------
 
   const MIN_EXTENDED_HOLD = 0.2
   const MIN_REP_COOLDOWN = 0.6
-
-  const PRIMARY_UP_THRESHOLD = 140
-  const PRIMARY_DOWN_THRESHOLD = 100
   const MIN_PEAK_DELTA = 15
+
+  // Template-aware thresholds (computed lazily, cached in ref)
+  const repThresholdsRef = useRef<{ up: number; down: number } | null>(null)
+  const getRepThresholds = () => {
+    if (repThresholdsRef.current) return repThresholdsRef.current
+    const tmpl = referenceTemplate ?? learnedTemplateRef.current
+    const primary = resolvedPrimaryRef.current ?? anglesOfInterest?.[0]
+    if (tmpl && primary) {
+      let peak = 0, start = Infinity
+      for (const s of tmpl.states) {
+        const r = s.angleRanges[primary]
+        if (r) {
+          if (r.mean > peak) peak = r.mean
+          if (r.mean < start) start = r.mean
+        }
+      }
+      if (peak > 0 && start < Infinity) {
+        const midpoint = (start + peak) / 2
+        repThresholdsRef.current = { up: midpoint, down: midpoint }
+        return repThresholdsRef.current
+      }
+    }
+    // Fallback when no template
+    repThresholdsRef.current = { up: 140, down: 100 }
+    return repThresholdsRef.current
+  }
 
   // Finite State Machine for rep detection
   const repFSMRef = useRef<{
@@ -594,30 +612,12 @@ const smoothAngles = (
 // Converts continuous angle → discrete states (flexed / extended / transition)
 const determineExerciseState = (angles: JointAngleData): string => {
 
-  // Pick a sensible default primary angle if none provided
-  let primaryAngle =
-    anglesOfInterest && anglesOfInterest.length > 0
-      ? anglesOfInterest[0]
-      : ("right_knee")
-
-  // If the chosen angle is missing, try a couple of common fallbacks
-  let angle = angles[primaryAngle]
+  // Use locked primary angle
+  const primaryAngle = resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || "right_knee")
+  const angle = angles[primaryAngle]
 
   if (angle === undefined) {
-    const fallbacks = [
-      "left_knee",
-      "right_elbow",
-      "left_elbow",
-      "right_hip",
-      "left_hip"
-    ]
-
-    const found = fallbacks.find(name => angles[name] !== undefined)
-
-    if (!found) return ""
-
-    primaryAngle = found
-    angle = angles[primaryAngle]
+    return ""
   }
 
   // thresholds here are assumed - because it makes it easier to run state detection later on 
@@ -640,9 +640,8 @@ const determineExerciseState = (angles: JointAngleData): string => {
 // Advanced rep detection independent of simple state labels
 const updateRepCount = (state: string) => {
 
-  // Derive primary angle reading
-  const primaryName =
-    (anglesOfInterest && anglesOfInterest[0]) || 'right_knee'
+  // Use locked primary angle
+  const primaryName = resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || 'right_knee')
 
   // Get last two angle samples (for velocity calculation)
   const last = angleHistoryRef.current[angleHistoryRef.current.length - 1]
@@ -681,7 +680,7 @@ const updateRepCount = (state: string) => {
   if (fsm.phase === 'down') {
 
     // Start upward movement when threshold crossed
-    if (a >= PRIMARY_UP_THRESHOLD && vel > 0) {
+    if (a >= getRepThresholds().up && vel > 0) {
       fsm.phase = 'up'
       fsm.lastPeak = a
     }
@@ -701,7 +700,7 @@ const updateRepCount = (state: string) => {
     // =============================
     // DOWNWARD PHASE (FLEXION)
     // =============================
-    if (a <= PRIMARY_DOWN_THRESHOLD && vel < 0) {
+    if (a <= getRepThresholds().down && vel < 0) {
 
       // Compute rep characteristics
       const valley = fsm.lastValley ?? a
@@ -1148,43 +1147,18 @@ const startPoseLoop = () => {
 
 
       // =============================
-      // 🎯 PRIMARY ANGLE SELECTION
+      // 🎯 PRIMARY ANGLE (locked for session)
       // =============================
-      if (anglesOfInterest && anglesOfInterest.length > 0) {
+      // Lazy-resolve if not set yet (template may have loaded after useEffect)
+      if (!resolvedPrimaryRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
+        const tmpl = referenceTemplate ?? learnedTemplateRef.current
+        resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
+      }
+      const sessionPrimary = resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || "right_knee")
 
-        let primary = anglesOfInterest[0]
-
-        // Special logic: choose more active knee dynamically
-        if (
-          exerciseType === 'knee-extension' &&
-          anglesOfInterest.includes('left_knee') &&
-          anglesOfInterest.includes('right_knee')
-        ) {
-
-          const history = angleHistoryRef.current
-
-          if (history.length > 15) {
-
-            const recent = history.slice(-15)
-
-            const getRange = (angle: string) => {
-              const values = recent.map(h => h.angles[angle] || 0)
-              return Math.max(...values) - Math.min(...values)
-            }
-
-            const leftRange = getRange('left_knee')
-            const rightRange = getRange('right_knee')
-
-            // Select side with greater movement
-            if (rightRange > leftRange && rightRange > 5) {
-              primary = 'right_knee'
-            }
-          }
-        }
-      
-
-// PRIMARY ANGLE TRACKING
-          const val = smoothedAngles[primary]
+      // PRIMARY ANGLE TRACKING
+      {
+          const val = smoothedAngles[sessionPrimary]
           if (val !== undefined) {
             primaryAngleHistoryRef.current.push({ t: ts / 1000, value: val })
             const cutoffT = (ts / 1000) - 12
@@ -1202,10 +1176,10 @@ const startPoseLoop = () => {
         let stateLabel = ""
         if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
             // TEMPLATE STATE MAPPING
-          const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
+          const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest, sessionPrimary)
           stateLabel = mapped?.name || ""
           if (stateLabel) setTemplateState(stateLabel)
-          const primary = getDriverAngle(learnedTemplateRef.current, anglesOfInterest)
+          const primary = sessionPrimary
           const sortable = learnedTemplateRef.current.states.filter(s => s.angleRanges[primary])
             // TEMPLATE-BASED REP DETECTION
           if (mapped && sortable.length >= 2) {
@@ -1262,9 +1236,8 @@ const startPoseLoop = () => {
 
         let frameFormScore = 0
         let frameRepError: ReturnType<typeof calculateRepError> = null
-        let frameThresholdStatus: "below" | "valid" | "good" | "rest" = "rest"
         if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
-          frameFormScore = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
+          frameFormScore = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest, sessionPrimary)
           setFormScore(Math.round(frameFormScore))
 
           frameRepError = calculateRepError(
@@ -1280,7 +1253,7 @@ const startPoseLoop = () => {
 
         // ── Dual-threshold live feedback (phase-aware) ──
         if (referenceTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
-          const primaryName = anglesOfInterest[0]
+          const primaryName = sessionPrimary
           const primaryVal = smoothedAngles[primaryName]
           if (primaryVal !== undefined) {
             setLivePrimaryAngle(primaryVal)
@@ -1330,11 +1303,13 @@ const startPoseLoop = () => {
             }
             setLiveThresholdStatus(currentThresholdStatus)
 
-            frameThresholdStatus = currentThresholdStatus
           }
         }
 
-        if (anglesOfInterest && anglesOfInterest.length > 0) {
+        // Only use signal-based rep detection when NO template is available.
+        // When a template exists, template-based state-transition detection
+        // (above) is the sole rep counter — prevents double-counting.
+        if (!learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
           updateRepCountFromSignal()
         }
 
@@ -1348,8 +1323,9 @@ const startPoseLoop = () => {
             referenceTemplate: effectiveRef,
             idealTemplate: idealTemplate ?? null,
             anglesOfInterest,
+            primaryAngleOverride: sessionPrimary,
           })
-          console.log("🧠 Feedback engine initialized")
+          console.log("🧠 Feedback engine initialized, primary:", sessionPrimary)
         }
         if (feedbackEngineRef.current) {
           feedbackEngineRef.current.tick({
@@ -1357,8 +1333,6 @@ const startPoseLoop = () => {
             smoothedAngles,
             repError: frameRepError,
             formScore: frameFormScore,
-            repCount,
-            thresholdStatus: frameThresholdStatus,
           })
         }
 
@@ -1405,18 +1379,8 @@ const updateRepCountFromSignal = () => {
   // Select tracking angles
   let trackingAngles: string[] = []
 
-  if (exerciseType === 'knee-extension') {
-    trackingAngles = ['left_knee', 'right_knee']
-  } else if (exerciseType === 'scap-wall-slides') {
-    trackingAngles = ['left_shoulder', 'right_shoulder']
-  } else if (anglesOfInterest && anglesOfInterest.length > 0) {
-    trackingAngles = [anglesOfInterest[0]]
-  }
-
-  // Ensure only valid angles are tracked
-  trackingAngles = trackingAngles.filter(a =>
-    anglesOfInterest?.includes(a)
-  )
+  // Use the single locked primary angle — no multi-tracking
+  trackingAngles = [resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || "right_knee")]
 
   if (trackingAngles.length === 0) return
 
@@ -1539,17 +1503,27 @@ const updateRepCountFromSignal = () => {
 
           const MIN_ROM = Math.max(15, observedRange * 0.3)
 
-          // Default thresholds
-          let PEAK_MIN = 145
-          let TROUGH_MAX = 110
+          // Derive thresholds from reference template if available,
+          // otherwise use generous defaults (this path only runs
+          // when no learned template exists — see increment 3 guard).
+          let PEAK_MIN = 140
+          let TROUGH_MAX = 115
 
-          // Exercise-specific tuning
-          if (exerciseType === 'scap-wall-slides') {
-            PEAK_MIN = 135
-            TROUGH_MAX = 130
-          } else if (exerciseType === 'knee-extension') {
-            PEAK_MIN = 135
-            TROUGH_MAX = 125
+          const tmpl = referenceTemplate ?? learnedTemplateRef.current
+          if (tmpl) {
+            // Use template peak/trough with 90% tolerance
+            let tPeak = 0, tStart = Infinity
+            for (const s of tmpl.states) {
+              const r = s.angleRanges[angleName]
+              if (r) {
+                if (r.mean > tPeak) tPeak = r.mean
+                if (r.mean < tStart) tStart = r.mean
+              }
+            }
+            if (tPeak > 0 && tStart < Infinity) {
+              PEAK_MIN = tPeak * 0.9
+              TROUGH_MAX = tStart * 1.1
+            }
           }
 
           const peakOK = state.lastPeak >= PEAK_MIN
@@ -1594,7 +1568,7 @@ const drawAngleAnnotations = (
   // No angles → nothing to draw
   if (!anglesOfInterest || anglesOfInterest.length === 0) return
 
-  const primaryAngle = anglesOfInterest[0]
+  const primaryAngle = resolvedPrimaryRef.current ?? anglesOfInterest[0]
   const primaryValue = angles[primaryAngle]
 
   // head/yaw to be removed later
@@ -1714,6 +1688,12 @@ useEffect(() => {
 
   } catch (e) {
     console.info("No learned template loaded for form scoring.")
+  }
+
+  // Resolve the primary angle once at init
+  if (anglesOfInterest && anglesOfInterest.length > 0) {
+    const tmpl = referenceTemplate ?? learnedTemplateRef.current
+    resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
   }
 
   // =============================
@@ -2202,27 +2182,41 @@ useEffect(() => {
 }
 
 // =============================
-// 🎯 DRIVER ANGLE SELECTION
+// 🎯 PRIMARY ANGLE RESOLUTION (single source of truth)
 // =============================
-// Selects the angle with maximum variation across template states
-function getDriverAngle(
-  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
-): string {
+// Only considers actual joint angles (not segment angles) so that
+// segment noise can't steal the primary slot. Picks the joint angle
+// with the greatest range across template states. Falls back to
+// anglesOfInterest[0] when no template is available.
 
-  let bestAngle = anglesOfInterest[0]
+/** Joint-angle names (3-point angles). Segments are excluded. */
+const JOINT_ANGLES = new Set([
+  "left_knee", "right_knee",
+  "left_elbow", "right_elbow",
+  "left_hip", "right_hip",
+  "left_shoulder", "right_shoulder",
+])
+
+function resolvePrimaryAngle(
+  anglesOfInterest: string[],
+  template?: import("@/lib/exercise-state-learner").LearnedExerciseTemplate | null,
+): string {
+  // Filter to joint-only angles that are in the interest list
+  const jointCandidates = anglesOfInterest.filter(a => JOINT_ANGLES.has(a))
+  const candidates = jointCandidates.length > 0 ? jointCandidates : anglesOfInterest
+
+  if (!template || template.states.length < 2) return candidates[0]
+
+  let bestAngle = candidates[0]
   let maxRange = -1
 
-  for (const angle of anglesOfInterest) {
-
+  for (const angle of candidates) {
     const means = template.states
       .map(s => s.angleRanges[angle]?.mean)
-      .filter(m => m !== undefined)
+      .filter((m): m is number => m !== undefined)
 
     if (means.length < 2) continue
-
     const range = Math.max(...means) - Math.min(...means)
-
     if (range > maxRange) {
       maxRange = range
       bestAngle = angle
@@ -2233,6 +2227,7 @@ function getDriverAngle(
 }
 
 
+
 // =============================
 // 📊 FORM SCORE COMPUTATION
 // =============================
@@ -2240,10 +2235,11 @@ function getDriverAngle(
 function computeFormScore(
   angles: JointAngleData,
   template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
+  anglesOfInterest: string[],
+  primaryOverride?: string,
 ): number {
 
-  const primary = getDriverAngle(template, anglesOfInterest)
+  const primary = primaryOverride ?? resolvePrimaryAngle(anglesOfInterest, template)
   const cur = angles[primary]
 
   if (cur === undefined) return 0
@@ -2309,10 +2305,11 @@ function computeFormScore(
 function mapToTemplateState(
   angles: JointAngleData,
   template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
+  anglesOfInterest: string[],
+  primaryOverride?: string,
 ): { id: string; name: string } | null {
 
-  const primary = getDriverAngle(template, anglesOfInterest)
+  const primary = primaryOverride ?? resolvePrimaryAngle(anglesOfInterest, template)
 
   const candidates = template.states.filter(
     s => s.angleRanges[primary]
