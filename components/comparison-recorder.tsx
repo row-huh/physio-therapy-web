@@ -1,8 +1,5 @@
 "use client"
 
-// =============================
-// IMPORTS
-// =============================
 import { useRef, useState, useEffect } from "react"
 import { PoseLandmarker, FilesetResolver, DrawingUtils, PoseLandmarkerResult } from "@mediapipe/tasks-vision"
 
@@ -24,10 +21,6 @@ import { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
 import { RealtimeFeedbackEngine } from "@/lib/feedback-generator"
 
 
-// =============================
-// AUDIO CONFIGURATION
-// =============================
-// Dynamically returns audio paths based on language (EN / UR)
 const getAudioFeedback = (lang: "en" | "ur") => ({
   knee: {
     up: `/audio/knee/${lang}/up.mp3`,
@@ -44,9 +37,6 @@ const getAudioFeedback = (lang: "en" | "ur") => ({
 })
 
 
-// =============================
-// COMPONENT PROPS
-// =============================
 export interface SessionEndData {
   reps_completed: number
   valid_reps: number
@@ -69,9 +59,6 @@ interface ComparisonRecorderProps {
 }
 
 
-// =============================
-// POSE LANDMARK INDEXES
-// =============================
 const POSE_LANDMARKS = {
   // Face
   NOSE: 0,
@@ -102,15 +89,11 @@ const POSE_LANDMARKS = {
 }
 
 
-// =============================
-//  ANGLE DATA TYPE
-// =============================
+
 interface JointAngleData {
   [key: string]: number
 }
-// =============================
-// MAIN COMPONENT
-// =============================
+
 export function ComparisonRecorder({
   onVideoRecorded,
   onSessionEnd,
@@ -125,7 +108,6 @@ export function ComparisonRecorder({
 }: ComparisonRecorderProps) {
 
 
-  // DOM + SYSTEM REFS
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -140,8 +122,7 @@ export function ComparisonRecorder({
 
 
 
-  //AUDIO SYSTEM (SMART FEEDBACK)
-
+  // audio feedback
   const lastAudioTimeRef = useRef<number>(0)     // cooldown tracker
   const lastSpokenRef = useRef<string>("")       // avoid repetition
 
@@ -1274,9 +1255,25 @@ const startPoseLoop = () => {
           const sortable = learnedTemplateRef.current.states.filter(s => s.angleRanges[primary])
             // TEMPLATE-BASED REP DETECTION
           if (mapped && sortable.length >= 2) {
-            const sorted = [...sortable].sort((a, b) => a.angleRanges[primary].mean - b.angleRanges[primary].mean)
-            const startId = sorted[0].id
-            const peakId = sorted[sorted.length - 1].id
+            // Determine start state from repSequence[0] (the first state the exercise actually
+            // begins in), then find the peak as the state furthest from it.
+            // This mirrors the logic in exercise-state-learner.ts countRepetitions() and
+            // fixes rep counting for exercises like scap wall slides where the starting
+            // position is NOT the lowest-angle state (arms-at-sides resting position is lower
+            // than the W start position, so a naïve sort would pick the wrong start).
+            const tmplForRep = learnedTemplateRef.current!
+            const firstSeqId = tmplForRep.repSequence?.[0]
+            const actualStart =
+              (firstSeqId ? sortable.find(s => s.id === firstSeqId) : undefined) ??
+              [...sortable].sort((a, b) => a.angleRanges[primary].mean - b.angleRanges[primary].mean)[0]
+            const startId = actualStart.id
+            const startMean = actualStart.angleRanges[primary].mean
+            const peakState = sortable.reduce((furthest, state) => {
+              const curDist = Math.abs(state.angleRanges[primary].mean - startMean)
+              const farDist = Math.abs(furthest.angleRanges[primary].mean - startMean)
+              return curDist > farDist ? state : furthest
+            }, sortable[0])
+            const peakId = peakState.id
             const MIN_STATE_DURATION = 0.2
             if (mapped.id !== lastStateRef.current) {
               const dt = (ts / 1000) - stateChangeTimestampRef.current
@@ -2656,10 +2653,7 @@ function updateTemplateRepCount(
       last === peakId
     ) {
 
-      // todo
-      // Increment the global rep counter in component via a custom event pattern
-      // We cannot set state here; instead we rely on calling setRepCount in the render loop (lift state by returning flag)
-      // As we are outside component scope, we return nothing; logic moved back to component caller
+
     }
 
     templateLastStateRef.current = mappedStateId

@@ -4,7 +4,6 @@ import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { SimpleRecorder } from "@/components/simple-recorder"
 import { VideoAnalysisPlayer } from "@/components/video-analysis-player"
 import { LearnedTemplateView } from "@/components/learned-template-view"
 import { uploadVideoToStorage } from "@/lib/storage"
@@ -14,6 +13,9 @@ import { EXERCISE_CONFIGS, getExerciseConfig } from "@/lib/exercise-config"
 import { Switch } from "@/components/ui/switch"
 import { formatAngleName } from "@/lib/utils"
 
+
+
+
 interface RecordExerciseProps {
   defaultName?: string
   defaultType?: string
@@ -21,6 +23,9 @@ interface RecordExerciseProps {
   onComplete?: () => void
   doneLabel?: string
 }
+
+
+
 
 export function RecordExercise({
   defaultName = "",
@@ -32,6 +37,9 @@ export function RecordExercise({
   const [step, setStep] = useState<"input" | "recording" | "complete">(
     defaultName ? "recording" : "input",
   )
+
+
+
   const [exerciseName, setExerciseName] = useState(defaultName)
   const [exerciseType, setExerciseType] = useState(defaultType)
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
@@ -39,6 +47,64 @@ export function RecordExercise({
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<PoseAnalysisResult | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+
+  const [recording, setRecording] = useState(false)
+  const [hasVideo, setHasVideo] = useState(false)
+
+
+
+
+  const startWebcam = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        setHasVideo(true)
+      }
+    } catch (err) {
+      console.error("Error accessing webcam:", err)
+    }
+  }
+
+  const stopWebcam = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      setHasVideo(false)
+    }
+  }
+
+  const startRecording = () => {
+    if (!streamRef.current) return
+
+    chunksRef.current = []
+    mediaRecorderRef.current = new MediaRecorder(streamRef.current)
+
+    mediaRecorderRef.current.ondataavailable = (e) => {
+      chunksRef.current.push(e.data)
+    }
+
+    mediaRecorderRef.current.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: "video/webm" })
+      handleRecordComplete(blob)
+    }
+
+    mediaRecorderRef.current.start()
+    setRecording(true)
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop()
+      setRecording(false)
+    }
+  }
 
   const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -199,8 +265,47 @@ export function RecordExercise({
             </div>
           </div>
 
-          <SimpleRecorder onRecordComplete={handleRecordComplete} />
+          <Card className="p-6 space-y-4">
+            <div className="aspect-video bg-black rounded-lg overflow-hidden">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+            </div>
 
+            <div className="flex gap-2">
+              {!hasVideo ? (
+                <Button onClick={startWebcam} className="flex-1">
+                  Start Webcam
+                </Button>
+              ) : (
+                <>
+                  <Button onClick={stopWebcam} variant="outline" className="flex-1 bg-transparent">
+                    Stop Webcam
+                  </Button>
+
+                  {!recording ? (
+                    <Button onClick={startRecording} className="flex-1 bg-red-600 hover:bg-red-700">
+                      Start Recording
+                    </Button>
+                  ) : (
+                    <Button onClick={stopRecording} variant="secondary" className="flex-1">
+                      Stop Recording
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {recording && (
+              <p className="text-sm text-red-600 animate-pulse">
+                ● Recording...
+              </p>
+            )}
+          </Card>
           {recordedBlob && (
             <Button onClick={() => setStep("complete")} className="w-full">
               Done Recording
