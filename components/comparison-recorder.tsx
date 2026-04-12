@@ -21,6 +21,7 @@ import {
 
 import { OneEuroFilter } from "@/lib/filters"
 import { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
+import { RealtimeFeedbackEngine } from "@/lib/feedback-generator"
 
 
 // =============================
@@ -46,8 +47,17 @@ const getAudioFeedback = (lang: "en" | "ur") => ({
 // =============================
 // COMPONENT PROPS
 // =============================
+export interface SessionEndData {
+  reps_completed: number
+  valid_reps: number
+  good_reps: number
+  form_score: number
+  duration_seconds: number
+}
+
 interface ComparisonRecorderProps {
   onVideoRecorded?: (videoBlob: Blob) => void
+  onSessionEnd?: (data: SessionEndData) => void
   anglesOfInterest?: string[]
   exerciseName?: string
   exerciseType?: string
@@ -55,6 +65,7 @@ interface ComparisonRecorderProps {
   referenceTemplate?: LearnedExerciseTemplate
   idealTemplate?: LearnedExerciseTemplate
   allowProgression?: boolean
+  fullscreen?: boolean
 }
 
 
@@ -102,13 +113,15 @@ interface JointAngleData {
 // =============================
 export function ComparisonRecorder({
   onVideoRecorded,
+  onSessionEnd,
   anglesOfInterest,
   exerciseName,
   exerciseType,
   enableTestMode = false,
   referenceTemplate,
   idealTemplate,
-  allowProgression = true
+  allowProgression = true,
+  fullscreen = false
 }: ComparisonRecorderProps) {
 
 
@@ -121,10 +134,13 @@ export function ComparisonRecorder({
   const poseRef = useRef<PoseLandmarker | null>(null)
   const rafRef = useRef<number | null>(null)
   const learnedTemplateRef = useRef<LearnedExerciseTemplate | null>(null)
+  const feedbackEngineRef = useRef<RealtimeFeedbackEngine | null>(null)
+  // Locked primary angle — resolved once, used everywhere in the session
+  const resolvedPrimaryRef = useRef<string | null>(null)
 
 
- 
-  //-------- AUDIO SYSTEM (SMART FEEDBACK)---------
+
+  //AUDIO SYSTEM (SMART FEEDBACK)
 
   const lastAudioTimeRef = useRef<number>(0)     // cooldown tracker
   const lastSpokenRef = useRef<string>("")       // avoid repetition
@@ -154,13 +170,10 @@ export function ComparisonRecorder({
 
 
 
-  //------- UI STATE-----------
-
-  const [isStreaming, setIsStreaming] = useState(false)
+ const [isStreaming, setIsStreaming] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [language, setLanguage] = useState<"en" | "ur">("en")
 
-  // -----------EXERCISE TRACKING STATE----------
 
   const [currentAngles, setCurrentAngles] = useState<JointAngleData>({})
   const [repCount, setRepCount] = useState(0)
@@ -171,7 +184,7 @@ export function ComparisonRecorder({
   const [templateState, setTemplateState] = useState<string>("")
 
 
-  //--------ERROR & ANALYSIS STATE----------
+
 
   const [repErrors, setRepErrors] = useState<RepError[]>([])
   const [errorSummary, setErrorSummary] = useState<RepErrorSummary | null>(null)
@@ -188,7 +201,6 @@ export function ComparisonRecorder({
 
 
  
-  //-------- PERFORMANCE METRICS-----------
  
   const [formScore, setFormScore] = useState<number>(0)
   const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
@@ -197,18 +209,33 @@ export function ComparisonRecorder({
 
 
 
-  // ----------LIVE FEEDBACK SYSTEM----------
 
   const [liveThresholdStatus, setLiveThresholdStatus] =
-    useState<"below" | "valid" | "good">("below")
+    useState<"below" | "valid" | "good" | "rest">("rest")
 
   const [livePrimaryAngle, setLivePrimaryAngle] = useState<number | null>(null)
   const [liveValidReps, setLiveValidReps] = useState(0)
   const [liveGoodReps, setLiveGoodReps] = useState(0)
 
+  // Track the peak angle reached in the current rep cycle (for sticky threshold status)
+  const repCyclePeakRef = useRef<number>(0)
+
+  // Rep quality: recorded at peak detection time, used at rep completion time.
+  // This avoids the timing issue where repCyclePeakRef resets (when primaryVal
+  // drops below midpoint) BEFORE the state matcher detects return-to-start.
+  const repWasValidRef = useRef<boolean>(false)
+  const repWasGoodRef = useRef<boolean>(false)
+
+  // Session tracking for DB persistence
+  const sessionStartTimeRef = useRef<number>(0)
+  const formScoreSamplesRef = useRef<number[]>([])
+  const refPeakRef = useRef<number>(0)
+  const idealPeakRef = useRef<number>(0)
+  const [sessionEnded, setSessionEnded] = useState(false)
+  const [sessionSummary, setSessionSummary] = useState<SessionEndData | null>(null)
 
 
-  // ------------ TEST MODE STATE----------
+
 
   const [testMode, setTestMode] = useState(false)
   const [testVideoFile, setTestVideoFile] = useState<File | null>(null)
@@ -239,14 +266,36 @@ export function ComparisonRecorder({
 
 
 
-  //-------- REP DETECTION CONSTANTS---------
 
   const MIN_EXTENDED_HOLD = 0.2
   const MIN_REP_COOLDOWN = 0.6
-
-  const PRIMARY_UP_THRESHOLD = 140
-  const PRIMARY_DOWN_THRESHOLD = 100
   const MIN_PEAK_DELTA = 15
+
+  // Template-aware thresholds (computed lazily, cached in ref)
+  const repThresholdsRef = useRef<{ up: number; down: number } | null>(null)
+  const getRepThresholds = () => {
+    if (repThresholdsRef.current) return repThresholdsRef.current
+    const tmpl = referenceTemplate ?? learnedTemplateRef.current
+    const primary = resolvedPrimaryRef.current ?? anglesOfInterest?.[0]
+    if (tmpl && primary) {
+      let peak = 0, start = Infinity
+      for (const s of tmpl.states) {
+        const r = s.angleRanges[primary]
+        if (r) {
+          if (r.mean > peak) peak = r.mean
+          if (r.mean < start) start = r.mean
+        }
+      }
+      if (peak > 0 && start < Infinity) {
+        const midpoint = (start + peak) / 2
+        repThresholdsRef.current = { up: midpoint, down: midpoint }
+        return repThresholdsRef.current
+      }
+    }
+    // Fallback when no template
+    repThresholdsRef.current = { up: 140, down: 100 }
+    return repThresholdsRef.current
+  }
 
   // Finite State Machine for rep detection
   const repFSMRef = useRef<{
@@ -587,30 +636,12 @@ const smoothAngles = (
 // Converts continuous angle → discrete states (flexed / extended / transition)
 const determineExerciseState = (angles: JointAngleData): string => {
 
-  // Pick a sensible default primary angle if none provided
-  let primaryAngle =
-    anglesOfInterest && anglesOfInterest.length > 0
-      ? anglesOfInterest[0]
-      : ("right_knee")
-
-  // If the chosen angle is missing, try a couple of common fallbacks
-  let angle = angles[primaryAngle]
+  // Use locked primary angle
+  const primaryAngle = resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || "right_knee")
+  const angle = angles[primaryAngle]
 
   if (angle === undefined) {
-    const fallbacks = [
-      "left_knee",
-      "right_elbow",
-      "left_elbow",
-      "right_hip",
-      "left_hip"
-    ]
-
-    const found = fallbacks.find(name => angles[name] !== undefined)
-
-    if (!found) return ""
-
-    primaryAngle = found
-    angle = angles[primaryAngle]
+    return ""
   }
 
   // thresholds here are assumed - because it makes it easier to run state detection later on 
@@ -633,9 +664,8 @@ const determineExerciseState = (angles: JointAngleData): string => {
 // Advanced rep detection independent of simple state labels
 const updateRepCount = (state: string) => {
 
-  // Derive primary angle reading
-  const primaryName =
-    (anglesOfInterest && anglesOfInterest[0]) || 'right_knee'
+  // Use locked primary angle
+  const primaryName = resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || 'right_knee')
 
   // Get last two angle samples (for velocity calculation)
   const last = angleHistoryRef.current[angleHistoryRef.current.length - 1]
@@ -674,7 +704,7 @@ const updateRepCount = (state: string) => {
   if (fsm.phase === 'down') {
 
     // Start upward movement when threshold crossed
-    if (a >= PRIMARY_UP_THRESHOLD && vel > 0) {
+    if (a >= getRepThresholds().up && vel > 0) {
       fsm.phase = 'up'
       fsm.lastPeak = a
     }
@@ -694,7 +724,7 @@ const updateRepCount = (state: string) => {
     // =============================
     // DOWNWARD PHASE (FLEXION)
     // =============================
-    if (a <= PRIMARY_DOWN_THRESHOLD && vel < 0) {
+    if (a <= getRepThresholds().down && vel < 0) {
 
       // Compute rep characteristics
       const valley = fsm.lastValley ?? a
@@ -798,6 +828,7 @@ const openWebcam = async () => {
     }
 
     setIsStreaming(true)
+    sessionStartTimeRef.current = Date.now()
 
   } catch (e) {
     console.error("Failed to open webcam", e)
@@ -905,12 +936,16 @@ const resetTestVideo = () => {
 
   // Reset UI + tracking states
   setRepCount(0)
+  setLiveValidReps(0)
+  setLiveGoodReps(0)
   setCurrentState("")
   setCurrentAngles({})
 
   // Reset internal tracking refs
   lastStateRef.current = ""
   hasVisitedPeakRef.current = false
+  repWasValidRef.current = false
+  repWasGoodRef.current = false
   stateChangeTimestampRef.current = 0
 
   angleFiltersRef.current.clear()
@@ -924,10 +959,46 @@ const resetTestVideo = () => {
 
 
 // =============================
+// 🏁 COMPUTE & SAVE SESSION SUMMARY
+// =============================
+// Snapshots all session data BEFORE any resets, saves to state for the
+// summary overlay, and fires the onSessionEnd callback.
+const saveAndEndSession = () => {
+  // Snapshot data before any resets
+  const durationSeconds = sessionStartTimeRef.current > 0
+    ? Math.round((Date.now() - sessionStartTimeRef.current) / 1000)
+    : 0
+  const samples = formScoreSamplesRef.current
+  const avgFormScore = samples.length > 0
+    ? Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+    : 0
+
+  const summary: SessionEndData = {
+    reps_completed: repCount,
+    valid_reps: liveValidReps,
+    good_reps: liveGoodReps,
+    form_score: avgFormScore,
+    duration_seconds: durationSeconds,
+  }
+
+  // Store for overlay display (before state resets wipe the values)
+  setSessionSummary(summary)
+  setSessionEnded(true)
+
+  // Fire callback
+  onSessionEnd?.(summary)
+}
+
+
+// =============================
 // STOP TEST MODE
 // =============================
-// Completely stops video + tracking loop
+// Completely stops video + tracking loop, saves session first
 const stopTestMode = () => {
+  // Save session snapshot before resetting
+  if (onSessionEnd && repCount > 0) {
+    saveAndEndSession()
+  }
 
   if (videoRef.current) {
     videoRef.current.pause()
@@ -946,22 +1017,48 @@ const stopTestMode = () => {
   setTestVideoFile(null)
 
   setRepCount(0)
+  setLiveValidReps(0)
+  setLiveGoodReps(0)
   setCurrentState("")
   setCurrentAngles({})
 
   // Reset internal tracking
   lastStateRef.current = ""
   hasVisitedPeakRef.current = false
+  repWasValidRef.current = false
+  repWasGoodRef.current = false
   stateChangeTimestampRef.current = 0
 
   angleFiltersRef.current.clear()
   angleHistoryRef.current = []
+  formScoreSamplesRef.current = []
 
   setRepDetails([])
 
   // Reset FSM
   repFSMRef.current = { phase: 'idle' }
 }
+
+
+// =============================
+// 🏁 END SESSION (webcam)
+// =============================
+const endSession = () => {
+  // Snapshot and save FIRST
+  saveAndEndSession()
+
+  // Then stop everything
+  if (streamRef.current) {
+    streamRef.current.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+  }
+  if (rafRef.current) {
+    cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }
+  setIsStreaming(false)
+}
+
  // =============================
 // 🤖 MEDIAPIPE INITIALIZATION
 // =============================
@@ -1141,44 +1238,18 @@ const startPoseLoop = () => {
 
 
       // =============================
-      // 🎯 PRIMARY ANGLE SELECTION
+      // 🎯 PRIMARY ANGLE (locked for session)
       // =============================
-      if (anglesOfInterest && anglesOfInterest.length > 0) {
+      // Lazy-resolve if not set yet (template may have loaded after useEffect)
+      if (!resolvedPrimaryRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
+        const tmpl = referenceTemplate ?? learnedTemplateRef.current
+        resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
+      }
+      const sessionPrimary = resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || "right_knee")
 
-        let primary = anglesOfInterest[0]
-
-        // Special logic: choose more active knee dynamically
-        if (
-          exerciseType === 'knee-extension' &&
-          anglesOfInterest.includes('left_knee') &&
-          anglesOfInterest.includes('right_knee')
-        ) {
-
-          const history = angleHistoryRef.current
-
-          if (history.length > 15) {
-
-            const recent = history.slice(-15)
-
-            const getRange = (angle: string) => {
-              const values = recent.map(h => h.angles[angle] || 0)
-              return Math.max(...values) - Math.min(...values)
-            }
-
-            const leftRange = getRange('left_knee')
-            const rightRange = getRange('right_knee')
-
-            // Select side with greater movement
-            if (rightRange > leftRange && rightRange > 5) {
-              primary = 'right_knee'
-            }
-          }
-        }
-      
-// =============================
-// PRIMARY ANGLE TRACKING
-// =============================
-          const val = smoothedAngles[primary]
+      // PRIMARY ANGLE TRACKING
+      {
+          const val = smoothedAngles[sessionPrimary]
           if (val !== undefined) {
             primaryAngleHistoryRef.current.push({ t: ts / 1000, value: val })
             const cutoffT = (ts / 1000) - 12
@@ -1196,10 +1267,10 @@ const startPoseLoop = () => {
         let stateLabel = ""
         if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
             // TEMPLATE STATE MAPPING
-          const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
+          const mapped = mapToTemplateState(smoothedAngles, learnedTemplateRef.current, anglesOfInterest, sessionPrimary)
           stateLabel = mapped?.name || ""
           if (stateLabel) setTemplateState(stateLabel)
-          const primary = getDriverAngle(learnedTemplateRef.current, anglesOfInterest)
+          const primary = sessionPrimary
           const sortable = learnedTemplateRef.current.states.filter(s => s.angleRanges[primary])
             // TEMPLATE-BASED REP DETECTION
           if (mapped && sortable.length >= 2) {
@@ -1214,8 +1285,26 @@ const startPoseLoop = () => {
                 // This handles intermediate states (start -> mid -> peak -> mid -> start)
                 if (mapped.id === peakId) {
                   hasVisitedPeakRef.current = true
+                  // Record rep quality NOW while repCyclePeakRef still holds the
+                  // actual peak. By the time we return to startId (rep completion),
+                  // the threshold section will have already reset repCyclePeakRef
+                  // (when primaryVal drops below midpoint), so we can't check there.
+                  const TOLERANCE = 0.9
+                  const cycleP = repCyclePeakRef.current
+                  repWasValidRef.current = refPeakRef.current > 0 && cycleP >= refPeakRef.current * TOLERANCE
+                  repWasGoodRef.current = idealPeakRef.current > 0 && cycleP >= idealPeakRef.current * TOLERANCE
                 }
                 if (mapped.id === startId && hasVisitedPeakRef.current) {
+                  // Use pre-recorded quality from peak detection time
+                  if (repWasValidRef.current) {
+                    setLiveValidReps(v => v + 1)
+                  }
+                  if (repWasGoodRef.current) {
+                    setLiveGoodReps(g => g + 1)
+                  }
+                  repWasValidRef.current = false
+                  repWasGoodRef.current = false
+
                   setRepCount(prev => {
                     const newCount = prev + 1
                     // ERROR CALCULATION
@@ -1254,32 +1343,44 @@ const startPoseLoop = () => {
           }
         }
 
-        if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
-          const score = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest)
-          setFormScore(Math.round(score))
-          
-          const realtimeError = calculateRepError(
+        let frameFormScore = 0
+        let frameRepError: ReturnType<typeof calculateRepError> = null
+        // Use learnedTemplateRef (which falls back to referenceTemplate if no local template)
+        const effectiveTemplate = learnedTemplateRef.current
+        if (effectiveTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
+          frameFormScore = computeFormScore(smoothedAngles, effectiveTemplate, anglesOfInterest, sessionPrimary)
+          setFormScore(Math.round(frameFormScore))
+          // Accumulate form score samples for session average (skip rest frames)
+          if (frameFormScore > 0) {
+            formScoreSamplesRef.current.push(frameFormScore)
+          }
+
+          frameRepError = calculateRepError(
             smoothedAngles,
-            learnedTemplateRef.current,
+            effectiveTemplate,
             anglesOfInterest,
             repCount + 1,
             ts / 1000
           )
-          setCurrentRepError(realtimeError)
-          setErrorFeedback(getErrorFeedback(realtimeError))
+          setCurrentRepError(frameRepError)
+          setErrorFeedback(getErrorFeedback(frameRepError))
         }
 
-        // ── Dual-threshold live feedback ──
+        // ── Dual-threshold live feedback (phase-aware) ──
         if (referenceTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
-          const primaryName = anglesOfInterest[0]
+          const primaryName = sessionPrimary
           const primaryVal = smoothedAngles[primaryName]
           if (primaryVal !== undefined) {
             setLivePrimaryAngle(primaryVal)
-            // Extract reference peak
+            // Extract reference peak (highest angle) and start (lowest angle)
             let refPeak = 0
+            let refStart = Infinity
             for (const s of referenceTemplate.states) {
               const r = s.angleRanges[primaryName]
-              if (r && r.mean > refPeak) refPeak = r.mean
+              if (r) {
+                if (r.mean > refPeak) refPeak = r.mean
+                if (r.mean < refStart) refStart = r.mean
+              }
             }
             // Extract ideal peak
             const effectiveIdeal = allowProgression && idealTemplate ? idealTemplate : referenceTemplate
@@ -1288,19 +1389,89 @@ const startPoseLoop = () => {
               const r = s.angleRanges[primaryName]
               if (r && r.mean > idealPeak) idealPeak = r.mean
             }
-            const TOLERANCE = 0.9
-            if (primaryVal >= idealPeak * TOLERANCE) {
-              setLiveThresholdStatus("good")
-            } else if (primaryVal >= refPeak * TOLERANCE) {
-              setLiveThresholdStatus("valid")
-            } else {
-              setLiveThresholdStatus("below")
+
+            // Sync refs so rep counting logic can use them
+            // (the useEffect init may miss these if referenceTemplate loads async)
+            refPeakRef.current = refPeak
+            idealPeakRef.current = idealPeak
+
+            // Track peak angle in current rep cycle (sticky: once high, stays high until reset)
+            if (primaryVal > repCyclePeakRef.current) {
+              repCyclePeakRef.current = primaryVal
             }
+
+            const TOLERANCE = 0.9
+            const midpoint = (refStart + refPeak) / 2
+
+            // Validate that the person is actually in a recognized exercise position.
+            // Collect all template states (reference + ideal) and check if current
+            // angles fall within the known ranges. Prevents false "Ideal ROM reached"
+            // when e.g. standing with straight legs during a seated knee extension.
+            const allTemplateStates = [
+              ...referenceTemplate.states,
+              ...(idealTemplate?.states ?? []),
+            ]
+            const inExerciseRange = isWithinExerciseRange(
+              smoothedAngles,
+              allTemplateStates,
+              anglesOfInterest!,
+            )
+
+            // Phase-aware: at rest position show neutral, during active phase use cycle peak
+            let currentThresholdStatus: "below" | "valid" | "good" | "rest" = "rest"
+            if (!inExerciseRange) {
+              // Angles don't match any known exercise state — not performing this exercise
+              currentThresholdStatus = "rest"
+              repCyclePeakRef.current = primaryVal
+            } else if (primaryVal < midpoint) {
+              // At or near rest/flexed position - this is a valid position, not "bad"
+              currentThresholdStatus = "rest"
+              // Reset peak when returning to rest (beginning of new rep cycle)
+              repCyclePeakRef.current = primaryVal
+            } else {
+              // Active/extending phase - use rep cycle peak for sticky status
+              const statusAngle = repCyclePeakRef.current
+              if (statusAngle >= idealPeak * TOLERANCE) {
+                currentThresholdStatus = "good"
+              } else if (statusAngle >= refPeak * TOLERANCE) {
+                currentThresholdStatus = "valid"
+              } else {
+                currentThresholdStatus = "below"
+              }
+            }
+            setLiveThresholdStatus(currentThresholdStatus)
+
           }
         }
 
-        if (anglesOfInterest && anglesOfInterest.length > 0) {
+        // Only use signal-based rep detection when NO template is available.
+        // When a template exists, template-based state-transition detection
+        // (above) is the sole rep counter — prevents double-counting.
+        if (!learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
           updateRepCountFromSignal()
+        }
+
+        // Real-time feedback engine tick
+        // Lazy-init: use referenceTemplate prop or fall back to learnedTemplateRef
+        const effectiveRef = referenceTemplate ?? learnedTemplateRef.current
+        if (!feedbackEngineRef.current && effectiveRef && anglesOfInterest && anglesOfInterest.length > 0) {
+          feedbackEngineRef.current = new RealtimeFeedbackEngine({
+            exerciseType: exerciseType ?? "",
+            allowProgression: allowProgression ?? true,
+            referenceTemplate: effectiveRef,
+            idealTemplate: idealTemplate ?? null,
+            anglesOfInterest,
+            primaryAngleOverride: sessionPrimary,
+          })
+          console.log("🧠 Feedback engine initialized, primary:", sessionPrimary)
+        }
+        if (feedbackEngineRef.current) {
+          feedbackEngineRef.current.tick({
+            now: ts / 1000,
+            smoothedAngles,
+            repError: frameRepError,
+            formScore: frameFormScore,
+          })
         }
 
         drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
@@ -1325,9 +1496,6 @@ const startPoseLoop = () => {
   }
 
 
-// =============================
-// 📊 SIGNAL-BASED REP DETECTION STATE
-// =============================
 // Stores per-angle signal tracking (peaks, troughs, direction)
 const repSignalStatesRef = useRef<{
   [key: string]: {
@@ -1342,43 +1510,23 @@ const repSignalStatesRef = useRef<{
 const lastRepTimeRef = useRef<number>(0)
 
 
-// =============================
-// 🔁 SIGNAL-BASED REP DETECTION
-// =============================
+// Signal rep detection
 // Uses derivative + hysteresis to detect movement cycles
 const updateRepCountFromSignal = () => {
 
-  // =============================
-  // 🎯 SELECT TRACKING ANGLES
-  // =============================
+  // Select tracking angles
   let trackingAngles: string[] = []
 
-  if (exerciseType === 'knee-extension') {
-    trackingAngles = ['left_knee', 'right_knee']
-  } else if (exerciseType === 'scap-wall-slides') {
-    trackingAngles = ['left_shoulder', 'right_shoulder']
-  } else if (anglesOfInterest && anglesOfInterest.length > 0) {
-    trackingAngles = [anglesOfInterest[0]]
-  }
-
-  // Ensure only valid angles are tracked
-  trackingAngles = trackingAngles.filter(a =>
-    anglesOfInterest?.includes(a)
-  )
+  // Use the single locked primary angle — no multi-tracking
+  trackingAngles = [resolvedPrimaryRef.current ?? (anglesOfInterest?.[0] || "right_knee")]
 
   if (trackingAngles.length === 0) return
 
-
-  // =============================
-  // 📊 REQUIRE MIN HISTORY
-  // =============================
   const history = angleHistoryRef.current
   if (history.length < 8) return
 
 
-  // =============================
-  // 🔄 PROCESS EACH TRACKED ANGLE
-  // =============================
+
   trackingAngles.forEach(angleName => {
 
     // Initialize state if not exists
@@ -1392,9 +1540,7 @@ const updateRepCountFromSignal = () => {
     const state = repSignalStatesRef.current[angleName]
 
 
-    // =============================
-    // 📉 RECENT WINDOW EXTRACTION
-    // =============================
+
     const recent = history
       .slice(-30)
       .map(h => ({
@@ -1410,10 +1556,6 @@ const updateRepCountFromSignal = () => {
 
     if (validRecent.length < 5) return
 
-
-    // =============================
-    // 📈 DERIVATIVE (VELOCITY)
-    // =============================
     const n = validRecent.length
     const deriv: number[] = []
 
@@ -1429,9 +1571,7 @@ const updateRepCountFromSignal = () => {
     }
 
 
-    // =============================
-    // 🧠 SMOOTH DERIVATIVE (LOW-PASS)
-    // =============================
+
     const alpha = 0.3
 
     for (let i = 1; i < deriv.length; i++) {
@@ -1441,9 +1581,7 @@ const updateRepCountFromSignal = () => {
     }
 
 
-    // =============================
-    // 🎯 CURRENT DIRECTION
-    // =============================
+
     const lastIdx = deriv.length - 1
     const curr = deriv[lastIdx]
     const nowT = validRecent[validRecent.length - 1].t
@@ -1461,9 +1599,7 @@ const updateRepCountFromSignal = () => {
     if (!dir) return
 
 
-    // =============================
-    // 🔁 DIRECTION CHANGE DETECTION
-    // =============================
+    // Direction change detecion
     if (dir !== state.lastDirection) {
 
       // Prevent rapid oscillations (noise)
@@ -1472,25 +1608,20 @@ const updateRepCountFromSignal = () => {
         return
       }
 
-      // =============================
-      // ⬆️ PEAK DETECTION
-      // =============================
+      // Peak Detection
       if (state.lastDirection === 'up' && dir === 'down') {
         state.lastPeak =
           validRecent[validRecent.length - 1].value
       }
 
-      // =============================
-      // ⬇️ TROUGH DETECTION
-      // =============================
+      // trough detection
       if (state.lastDirection === 'down' && dir === 'up') {
 
         state.lastTrough =
           validRecent[validRecent.length - 1].value
 
-        // =============================
-        // 🎯 VALID REP CHECK
-        // =============================
+      
+      // valid rep checking
         if (
           state.lastPeak !== undefined &&
           state.lastTrough !== undefined
@@ -1510,17 +1641,27 @@ const updateRepCountFromSignal = () => {
 
           const MIN_ROM = Math.max(15, observedRange * 0.3)
 
-          // Default thresholds
-          let PEAK_MIN = 145
-          let TROUGH_MAX = 110
+          // Derive thresholds from reference template if available,
+          // otherwise use generous defaults (this path only runs
+          // when no learned template exists — see increment 3 guard).
+          let PEAK_MIN = 140
+          let TROUGH_MAX = 115
 
-          // Exercise-specific tuning
-          if (exerciseType === 'scap-wall-slides') {
-            PEAK_MIN = 135
-            TROUGH_MAX = 130
-          } else if (exerciseType === 'knee-extension') {
-            PEAK_MIN = 135
-            TROUGH_MAX = 125
+          const tmpl = referenceTemplate ?? learnedTemplateRef.current
+          if (tmpl) {
+            // Use template peak/trough with 90% tolerance
+            let tPeak = 0, tStart = Infinity
+            for (const s of tmpl.states) {
+              const r = s.angleRanges[angleName]
+              if (r) {
+                if (r.mean > tPeak) tPeak = r.mean
+                if (r.mean < tStart) tStart = r.mean
+              }
+            }
+            if (tPeak > 0 && tStart < Infinity) {
+              PEAK_MIN = tPeak * 0.9
+              TROUGH_MAX = tStart * 1.1
+            }
           }
 
           const peakOK = state.lastPeak >= PEAK_MIN
@@ -1550,9 +1691,8 @@ const updateRepCountFromSignal = () => {
     }
   })
 }
-  // =============================
-// 📐 DRAW ANGLE ANNOTATIONS (UI OVERLAY)
-// =============================
+
+//Angle annotations overlay
 // Renders angle values on top of joints in canvas
 const drawAngleAnnotations = (
   ctx: CanvasRenderingContext2D,
@@ -1566,9 +1706,10 @@ const drawAngleAnnotations = (
   // No angles → nothing to draw
   if (!anglesOfInterest || anglesOfInterest.length === 0) return
 
-  const primaryAngle = anglesOfInterest[0]
+  const primaryAngle = resolvedPrimaryRef.current ?? anglesOfInterest[0]
   const primaryValue = angles[primaryAngle]
 
+  // head/yaw to be removed later
 
   // =============================
   // 🎯 DRAW PRIMARY ANGLE (FACE / BODY)
@@ -1602,9 +1743,7 @@ const drawAngleAnnotations = (
 
     } else {
 
-      // =============================
-      // 🧍 BODY JOINT LABEL MAPPING
-      // =============================
+// body joint label mapping
       // Maps angle → landmark position + offsets
       const angleToLandmarkMap: {
         [key: string]: {
@@ -1623,9 +1762,6 @@ const drawAngleAnnotations = (
         'right_hip': { landmark: POSE_LANDMARKS.RIGHT_HIP, offsetX: 15, offsetY: -10 },
       }
 
-      // =============================
-      // 📊 DRAW ALL SELECTED ANGLES
-      // =============================
       anglesOfInterest
         .filter(angleName =>
           angles[angleName] !== undefined &&
@@ -1689,9 +1825,22 @@ useEffect(() => {
     }
 
   } catch (e) {
-    console.info("No learned template loaded for form scoring.")
+    console.info("No learned template loaded from storage.")
   }
 
+  // Fall back to the reference template (doctor-recorded) if no local template
+  if (!learnedTemplateRef.current && referenceTemplate) {
+    learnedTemplateRef.current = referenceTemplate as import("@/lib/exercise-state-learner").LearnedExerciseTemplate
+  }
+
+  // Resolve the primary angle once at init
+  if (anglesOfInterest && anglesOfInterest.length > 0) {
+    const tmpl = referenceTemplate ?? learnedTemplateRef.current
+    resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
+  }
+
+  // Note: refPeakRef/idealPeakRef are synced in the per-frame render loop
+  // (threshold status section) where referenceTemplate is guaranteed available.
 
   // =============================
   // 🧹 CLEANUP ON UNMOUNT
@@ -1719,6 +1868,227 @@ useEffect(() => {
 
 }, [])
 
+  // =============================
+  // FULLSCREEN RENDER MODE
+  // =============================
+  if (fullscreen) {
+    return (
+      <div className="h-full w-full relative bg-black">
+        {/* Start overlay when not streaming (hidden when session summary is showing) */}
+        {!isStreaming && !isLoading && !sessionEnded && (
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <div className="flex flex-col gap-3 items-center">
+              <Button onClick={openWebcam} size="lg" className="gap-2 text-lg px-8 py-6">
+                Start Webcam
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLanguage(prev => prev === "en" ? "ur" : "en")}
+                className="text-white border-white/30 bg-black/40"
+              >
+                {language === "en" ? "English" : "اردو"}
+              </Button>
+              {enableTestMode && (
+                <>
+                  <input ref={fileInputRef} type="file" accept="video/*" onChange={handleTestVideoUpload} className="hidden" />
+                  <Button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading}
+                    variant="outline"
+                    size="lg"
+                    className="gap-2 text-white border-white/30 bg-black/40"
+                  >
+                    Test with Video File
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <div className="text-white text-lg animate-pulse">Loading...</div>
+          </div>
+        )}
+
+        {/* Video + Canvas (fills container) */}
+        <div className="relative w-full h-full">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-contain"
+          />
+          <canvas
+            ref={canvasRef}
+            className="absolute top-0 left-0 w-full h-full"
+          />
+
+          {isStreaming && (
+            <>
+              {/* Rep counter overlay */}
+              <div className={`absolute top-4 left-4 bg-black/80 backdrop-blur-sm rounded-lg px-6 py-4 border-2 ${
+                referenceTemplate
+                  ? liveThresholdStatus === "good"
+                    ? "border-green-500"
+                    : liveThresholdStatus === "valid"
+                      ? "border-yellow-500"
+                      : liveThresholdStatus === "rest"
+                        ? "border-blue-500"
+                        : "border-red-500"
+                  : "border-green-500"
+              }`}>
+                <div className={`text-sm font-semibold mb-1 ${
+                  referenceTemplate
+                    ? liveThresholdStatus === "good"
+                      ? "text-green-400"
+                      : liveThresholdStatus === "valid"
+                        ? "text-yellow-400"
+                        : liveThresholdStatus === "rest"
+                          ? "text-blue-400"
+                          : "text-red-400"
+                    : "text-green-400"
+                }`}>REPS</div>
+                <div className="text-5xl font-bold text-white">{repCount}</div>
+                {referenceTemplate && (
+                  <div className="mt-2 text-[10px] space-y-0.5">
+                    <div className={`font-semibold ${
+                      liveThresholdStatus === "good"
+                        ? "text-green-400"
+                        : liveThresholdStatus === "valid"
+                          ? "text-yellow-400"
+                          : liveThresholdStatus === "rest"
+                            ? "text-blue-400"
+                            : "text-red-400"
+                    }`}>
+                      {liveThresholdStatus === "good" ? "Ideal ROM reached" :
+                       liveThresholdStatus === "valid" ? "Reference ROM reached" :
+                       liveThresholdStatus === "rest" ? "Ready" :
+                       "Extend further"}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* State overlay */}
+              {(currentState || templateState) && (
+                <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg px-3 py-2 border border-blue-500">
+                  <div className="text-xs text-blue-400 font-semibold mb-0.5">STATE</div>
+                  <div className="text-lg font-bold text-white capitalize">{templateState || currentState}</div>
+                </div>
+              )}
+
+              {/* Live angles overlay (bottom) */}
+              {Object.keys(currentAngles).length > 0 && (
+                <div className="absolute bottom-4 left-4 right-4 bg-black/80 backdrop-blur-sm rounded-lg p-2 border border-purple-500/50">
+                  <div className="text-[10px] text-purple-400 font-semibold mb-0.5">LIVE ANGLES</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {anglesOfInterest && anglesOfInterest.length > 0 ? (
+                      anglesOfInterest.map(angleName => {
+                        const angle = currentAngles[angleName]
+                        if (angle === undefined) return null
+                        return (
+                          <div key={angleName} className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 capitalize">
+                              {angleName.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-sm font-bold text-white">
+                              {Math.round(angle)}°
+                            </span>
+                          </div>
+                        )
+                      })
+                    ) : (
+                      Object.entries(currentAngles)
+                        .filter(([name]) => !name.includes('segment'))
+                        .slice(0, 6)
+                        .map(([angleName, angle]) => (
+                          <div key={angleName} className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 capitalize">
+                              {angleName.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-sm font-bold text-white">
+                              {Math.round(angle)}°
+                            </span>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Test mode floating controls */}
+        {testMode && isStreaming && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+            <Button onClick={togglePlayPause} variant="outline" size="sm" className="bg-black/60 text-white border-white/30">
+              {isPlaying ? "Pause" : "Play"}
+            </Button>
+            <Button onClick={resetTestVideo} variant="outline" size="sm" className="bg-black/60 text-white border-white/30">
+              Reset
+            </Button>
+            <Button onClick={stopTestMode} variant="destructive" size="sm">
+              Stop
+            </Button>
+          </div>
+        )}
+
+        {/* End Session button for live webcam (non-test) */}
+        {!testMode && isStreaming && onSessionEnd && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10">
+            <Button
+              onClick={endSession}
+              variant="destructive"
+              size="lg"
+              className="gap-2 px-8 shadow-lg"
+            >
+              End Session
+            </Button>
+          </div>
+        )}
+
+        {/* Session ended summary overlay */}
+        {sessionEnded && sessionSummary && (
+          <div className="absolute inset-0 flex items-center justify-center z-30 bg-black/80 backdrop-blur-sm">
+            <div className="bg-black/90 border border-white/20 rounded-xl p-6 max-w-sm w-full space-y-4 text-center">
+              <h2 className="text-xl font-bold text-white">Session Complete</h2>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Total Reps</div>
+                  <div className="text-2xl font-bold text-white">{sessionSummary.reps_completed}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Valid Reps</div>
+                  <div className="text-2xl font-bold text-green-400">{sessionSummary.valid_reps}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Good Reps</div>
+                  <div className="text-2xl font-bold text-amber-400">{sessionSummary.good_reps}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Avg Form</div>
+                  <div className="text-2xl font-bold text-blue-400">{sessionSummary.form_score}%</div>
+                </div>
+              </div>
+              <p className="text-sm text-white/50">Session saved automatically</p>
+            </div>
+          </div>
+        )}
+
+        {testMode && testVideoFile && (
+          <div className="absolute top-16 left-4 bg-yellow-500/20 backdrop-blur-sm rounded px-2 py-1 z-10">
+            <div className="text-xs text-yellow-300 font-semibold">TEST: {testVideoFile.name}</div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <Card className="p-6 space-y-4">
       <div className="flex gap-3">
@@ -1729,7 +2099,7 @@ useEffect(() => {
     variant="outline"
     onClick={() => setLanguage(prev => prev === "en" ? "ur" : "en")}
   >
-    🌐 {language === "en" ? "English" : "اردو"}
+    {language === "en" ? "English" : "اردو"}
   </Button>
         
         {enableTestMode && !isStreaming && (
@@ -1803,7 +2173,9 @@ useEffect(() => {
                   ? "border-green-500"
                   : liveThresholdStatus === "valid"
                     ? "border-yellow-500"
-                    : "border-red-500"
+                    : liveThresholdStatus === "rest"
+                      ? "border-blue-500"
+                      : "border-red-500"
                 : "border-green-500"
             }`}>
               <div className={`text-sm font-semibold mb-1 ${
@@ -1812,7 +2184,9 @@ useEffect(() => {
                     ? "text-green-400"
                     : liveThresholdStatus === "valid"
                       ? "text-yellow-400"
-                      : "text-red-400"
+                      : liveThresholdStatus === "rest"
+                        ? "text-blue-400"
+                        : "text-red-400"
                   : "text-green-400"
               }`}>REPS</div>
               <div className="text-5xl font-bold text-white">{repCount}</div>
@@ -1823,11 +2197,14 @@ useEffect(() => {
                       ? "text-green-400"
                       : liveThresholdStatus === "valid"
                         ? "text-yellow-400"
-                        : "text-red-400"
+                        : liveThresholdStatus === "rest"
+                          ? "text-blue-400"
+                          : "text-red-400"
                   }`}>
                     {liveThresholdStatus === "good" ? "Ideal ROM reached" :
                      liveThresholdStatus === "valid" ? "Reference ROM reached" :
-                     "Below reference"}
+                     liveThresholdStatus === "rest" ? "Ready" :
+                     "Extend further"}
                   </div>
                 </div>
               )}
@@ -1993,27 +2370,41 @@ useEffect(() => {
 }
 
 // =============================
-// 🎯 DRIVER ANGLE SELECTION
+// 🎯 PRIMARY ANGLE RESOLUTION (single source of truth)
 // =============================
-// Selects the angle with maximum variation across template states
-function getDriverAngle(
-  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
-): string {
+// Only considers actual joint angles (not segment angles) so that
+// segment noise can't steal the primary slot. Picks the joint angle
+// with the greatest range across template states. Falls back to
+// anglesOfInterest[0] when no template is available.
 
-  let bestAngle = anglesOfInterest[0]
+/** Joint-angle names (3-point angles). Segments are excluded. */
+const JOINT_ANGLES = new Set([
+  "left_knee", "right_knee",
+  "left_elbow", "right_elbow",
+  "left_hip", "right_hip",
+  "left_shoulder", "right_shoulder",
+])
+
+function resolvePrimaryAngle(
+  anglesOfInterest: string[],
+  template?: import("@/lib/exercise-state-learner").LearnedExerciseTemplate | null,
+): string {
+  // Filter to joint-only angles that are in the interest list
+  const jointCandidates = anglesOfInterest.filter(a => JOINT_ANGLES.has(a))
+  const candidates = jointCandidates.length > 0 ? jointCandidates : anglesOfInterest
+
+  if (!template || template.states.length < 2) return candidates[0]
+
+  let bestAngle = candidates[0]
   let maxRange = -1
 
-  for (const angle of anglesOfInterest) {
-
+  for (const angle of candidates) {
     const means = template.states
       .map(s => s.angleRanges[angle]?.mean)
-      .filter(m => m !== undefined)
+      .filter((m): m is number => m !== undefined)
 
     if (means.length < 2) continue
-
     const range = Math.max(...means) - Math.min(...means)
-
     if (range > maxRange) {
       maxRange = range
       bestAngle = angle
@@ -2024,6 +2415,7 @@ function getDriverAngle(
 }
 
 
+
 // =============================
 // 📊 FORM SCORE COMPUTATION
 // =============================
@@ -2031,10 +2423,11 @@ function getDriverAngle(
 function computeFormScore(
   angles: JointAngleData,
   template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
+  anglesOfInterest: string[],
+  primaryOverride?: string,
 ): number {
 
-  const primary = getDriverAngle(template, anglesOfInterest)
+  const primary = primaryOverride ?? resolvePrimaryAngle(anglesOfInterest, template)
   const cur = angles[primary]
 
   if (cur === undefined) return 0
@@ -2093,17 +2486,68 @@ function computeFormScore(
 }
 
 
-// =============================
-// 🧠 TEMPLATE STATE MATCHING
-// =============================
+// exercise position validation
+// Checks if the current angles fall within the global range of known template states.
+// This prevents false "Ideal ROM reached" when the person isn't actually performing
+// the exercise (e.g., standing with straight legs vs. seated knee extension).
+//
+// Computes the overall [min, max] across ALL states for each angle of interest,
+// then checks if the current angles fall within that range (+ buffer).
+// Returns true if the majority of angles are in range.
+
+function isWithinExerciseRange(
+  smoothedAngles: Record<string, number>,
+  allStates: { angleRanges: Record<string, { min: number; max: number }> }[],
+  anglesOfInterest: string[],
+  buffer: number = 20
+): boolean {
+  if (allStates.length === 0 || anglesOfInterest.length === 0) return false
+
+  let inRangeCount = 0
+  let checkedCount = 0
+
+  for (const angle of anglesOfInterest) {
+    const actual = smoothedAngles[angle]
+    if (actual === undefined) continue
+
+    // Compute global min/max for this angle across all states
+    let globalMin = Infinity
+    let globalMax = -Infinity
+    let found = false
+
+    for (const state of allStates) {
+      const range = state.angleRanges[angle]
+      if (range) {
+        if (range.min < globalMin) globalMin = range.min
+        if (range.max > globalMax) globalMax = range.max
+        found = true
+      }
+    }
+
+    if (!found) continue
+    checkedCount++
+
+    if (actual >= globalMin - buffer && actual <= globalMax + buffer) {
+      inRangeCount++
+    }
+  }
+
+  if (checkedCount === 0) return false
+  // Require at least half the angles to be in the template's range
+  return inRangeCount / checkedCount >= 0.5
+}
+
+
+// Template state matching
 // Maps current angles → closest template state
 function mapToTemplateState(
   angles: JointAngleData,
   template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
+  anglesOfInterest: string[],
+  primaryOverride?: string,
 ): { id: string; name: string } | null {
 
-  const primary = getDriverAngle(template, anglesOfInterest)
+  const primary = primaryOverride ?? resolvePrimaryAngle(anglesOfInterest, template)
 
   const candidates = template.states.filter(
     s => s.angleRanges[primary]
@@ -2151,17 +2595,14 @@ function mapToTemplateState(
 }
 
 
-// =============================
-// 🔁 TEMPLATE REP TRACKING STATE
-// =============================
+
 const templateLastStateRef: { current: string | null } = { current: null }
 const templateVisitedPeakRef: { current: boolean } = { current: false }
 const templateLastChangeTsRef: { current: number } = { current: 0 }
 
 
-// =============================
-// 🔁 TEMPLATE-BASED REP DETECTION
-// =============================
+
+// template rep counte
 function updateTemplateRepCount(
   mappedStateId: string | null,
   timestamp: number,
@@ -2202,17 +2643,13 @@ function updateTemplateRepCount(
     const peakId = sorted[sorted.length - 1].id
 
 
-    // =============================
-    // 🎯 PEAK DETECTION
-    // =============================
+    // peak is detected
     if (mappedStateId === peakId && last === startId) {
       templateVisitedPeakRef.current = true
     }
 
 
-    // =============================
-    // 🔁 REP COMPLETION (START → PEAK → START)
-    // =============================
+// rep is completed if start --> peak --> start cycle is completed
     if (
       mappedStateId === startId &&
       templateVisitedPeakRef.current &&
