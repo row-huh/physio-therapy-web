@@ -47,8 +47,17 @@ const getAudioFeedback = (lang: "en" | "ur") => ({
 // =============================
 // COMPONENT PROPS
 // =============================
+export interface SessionEndData {
+  reps_completed: number
+  valid_reps: number
+  good_reps: number
+  form_score: number
+  duration_seconds: number
+}
+
 interface ComparisonRecorderProps {
   onVideoRecorded?: (videoBlob: Blob) => void
+  onSessionEnd?: (data: SessionEndData) => void
   anglesOfInterest?: string[]
   exerciseName?: string
   exerciseType?: string
@@ -104,6 +113,7 @@ interface JointAngleData {
 // =============================
 export function ComparisonRecorder({
   onVideoRecorded,
+  onSessionEnd,
   anglesOfInterest,
   exerciseName,
   exerciseType,
@@ -209,6 +219,14 @@ export function ComparisonRecorder({
 
   // Track the peak angle reached in the current rep cycle (for sticky threshold status)
   const repCyclePeakRef = useRef<number>(0)
+
+  // Session tracking for DB persistence
+  const sessionStartTimeRef = useRef<number>(0)
+  const formScoreSamplesRef = useRef<number[]>([])
+  const refPeakRef = useRef<number>(0)
+  const idealPeakRef = useRef<number>(0)
+  const [sessionEnded, setSessionEnded] = useState(false)
+  const [sessionSummary, setSessionSummary] = useState<SessionEndData | null>(null)
 
 
 
@@ -804,6 +822,7 @@ const openWebcam = async () => {
     }
 
     setIsStreaming(true)
+    sessionStartTimeRef.current = Date.now()
 
   } catch (e) {
     console.error("Failed to open webcam", e)
@@ -911,6 +930,8 @@ const resetTestVideo = () => {
 
   // Reset UI + tracking states
   setRepCount(0)
+  setLiveValidReps(0)
+  setLiveGoodReps(0)
   setCurrentState("")
   setCurrentAngles({})
 
@@ -930,10 +951,46 @@ const resetTestVideo = () => {
 
 
 // =============================
+// 🏁 COMPUTE & SAVE SESSION SUMMARY
+// =============================
+// Snapshots all session data BEFORE any resets, saves to state for the
+// summary overlay, and fires the onSessionEnd callback.
+const saveAndEndSession = () => {
+  // Snapshot data before any resets
+  const durationSeconds = sessionStartTimeRef.current > 0
+    ? Math.round((Date.now() - sessionStartTimeRef.current) / 1000)
+    : 0
+  const samples = formScoreSamplesRef.current
+  const avgFormScore = samples.length > 0
+    ? Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+    : 0
+
+  const summary: SessionEndData = {
+    reps_completed: repCount,
+    valid_reps: liveValidReps,
+    good_reps: liveGoodReps,
+    form_score: avgFormScore,
+    duration_seconds: durationSeconds,
+  }
+
+  // Store for overlay display (before state resets wipe the values)
+  setSessionSummary(summary)
+  setSessionEnded(true)
+
+  // Fire callback
+  onSessionEnd?.(summary)
+}
+
+
+// =============================
 // STOP TEST MODE
 // =============================
-// Completely stops video + tracking loop
+// Completely stops video + tracking loop, saves session first
 const stopTestMode = () => {
+  // Save session snapshot before resetting
+  if (onSessionEnd && repCount > 0) {
+    saveAndEndSession()
+  }
 
   if (videoRef.current) {
     videoRef.current.pause()
@@ -952,6 +1009,8 @@ const stopTestMode = () => {
   setTestVideoFile(null)
 
   setRepCount(0)
+  setLiveValidReps(0)
+  setLiveGoodReps(0)
   setCurrentState("")
   setCurrentAngles({})
 
@@ -962,12 +1021,34 @@ const stopTestMode = () => {
 
   angleFiltersRef.current.clear()
   angleHistoryRef.current = []
+  formScoreSamplesRef.current = []
 
   setRepDetails([])
 
   // Reset FSM
   repFSMRef.current = { phase: 'idle' }
 }
+
+
+// =============================
+// 🏁 END SESSION (webcam)
+// =============================
+const endSession = () => {
+  // Snapshot and save FIRST
+  saveAndEndSession()
+
+  // Then stop everything
+  if (streamRef.current) {
+    streamRef.current.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+  }
+  if (rafRef.current) {
+    cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }
+  setIsStreaming(false)
+}
+
  // =============================
 // 🤖 MEDIAPIPE INITIALIZATION
 // =============================
@@ -1196,6 +1277,16 @@ const startPoseLoop = () => {
                   hasVisitedPeakRef.current = true
                 }
                 if (mapped.id === startId && hasVisitedPeakRef.current) {
+                  // Track valid/good reps using the rep cycle peak
+                  const TOLERANCE = 0.9
+                  const cycleP = repCyclePeakRef.current
+                  if (refPeakRef.current > 0 && cycleP >= refPeakRef.current * TOLERANCE) {
+                    setLiveValidReps(v => v + 1)
+                  }
+                  if (idealPeakRef.current > 0 && cycleP >= idealPeakRef.current * TOLERANCE) {
+                    setLiveGoodReps(g => g + 1)
+                  }
+
                   setRepCount(prev => {
                     const newCount = prev + 1
                     // ERROR CALCULATION
@@ -1239,6 +1330,10 @@ const startPoseLoop = () => {
         if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
           frameFormScore = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest, sessionPrimary)
           setFormScore(Math.round(frameFormScore))
+          // Accumulate form score samples for session average (skip rest frames)
+          if (frameFormScore > 0) {
+            formScoreSamplesRef.current.push(frameFormScore)
+          }
 
           frameRepError = calculateRepError(
             smoothedAngles,
@@ -1714,6 +1809,20 @@ useEffect(() => {
     resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
   }
 
+  // Precompute reference/ideal peaks for session tracking
+  if (referenceTemplate && resolvedPrimaryRef.current) {
+    const primary = resolvedPrimaryRef.current
+    for (const s of referenceTemplate.states) {
+      const r = s.angleRanges[primary]
+      if (r && r.mean > refPeakRef.current) refPeakRef.current = r.mean
+    }
+    const effective = allowProgression && idealTemplate ? idealTemplate : referenceTemplate
+    for (const s of effective.states) {
+      const r = s.angleRanges[primary]
+      if (r && r.mean > idealPeakRef.current) idealPeakRef.current = r.mean
+    }
+  }
+
   // =============================
   // 🧹 CLEANUP ON UNMOUNT
   // =============================
@@ -1746,8 +1855,8 @@ useEffect(() => {
   if (fullscreen) {
     return (
       <div className="h-full w-full relative bg-black">
-        {/* Start overlay when not streaming */}
-        {!isStreaming && !isLoading && (
+        {/* Start overlay when not streaming (hidden when session summary is showing) */}
+        {!isStreaming && !isLoading && !sessionEnded && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
             <div className="flex flex-col gap-3 items-center">
               <Button onClick={openWebcam} size="lg" className="gap-2 text-lg px-8 py-6">
@@ -1907,6 +2016,48 @@ useEffect(() => {
             <Button onClick={stopTestMode} variant="destructive" size="sm">
               Stop
             </Button>
+          </div>
+        )}
+
+        {/* End Session button for live webcam (non-test) */}
+        {!testMode && isStreaming && onSessionEnd && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10">
+            <Button
+              onClick={endSession}
+              variant="destructive"
+              size="lg"
+              className="gap-2 px-8 shadow-lg"
+            >
+              End Session
+            </Button>
+          </div>
+        )}
+
+        {/* Session ended summary overlay */}
+        {sessionEnded && sessionSummary && (
+          <div className="absolute inset-0 flex items-center justify-center z-30 bg-black/80 backdrop-blur-sm">
+            <div className="bg-black/90 border border-white/20 rounded-xl p-6 max-w-sm w-full space-y-4 text-center">
+              <h2 className="text-xl font-bold text-white">Session Complete</h2>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Total Reps</div>
+                  <div className="text-2xl font-bold text-white">{sessionSummary.reps_completed}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Valid Reps</div>
+                  <div className="text-2xl font-bold text-green-400">{sessionSummary.valid_reps}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Good Reps</div>
+                  <div className="text-2xl font-bold text-amber-400">{sessionSummary.good_reps}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-3">
+                  <div className="text-[10px] text-white/50">Avg Form</div>
+                  <div className="text-2xl font-bold text-blue-400">{sessionSummary.form_score}%</div>
+                </div>
+              </div>
+              <p className="text-sm text-white/50">Session saved automatically</p>
+            </div>
           </div>
         )}
 
