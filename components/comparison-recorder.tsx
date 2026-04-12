@@ -220,6 +220,12 @@ export function ComparisonRecorder({
   // Track the peak angle reached in the current rep cycle (for sticky threshold status)
   const repCyclePeakRef = useRef<number>(0)
 
+  // Rep quality: recorded at peak detection time, used at rep completion time.
+  // This avoids the timing issue where repCyclePeakRef resets (when primaryVal
+  // drops below midpoint) BEFORE the state matcher detects return-to-start.
+  const repWasValidRef = useRef<boolean>(false)
+  const repWasGoodRef = useRef<boolean>(false)
+
   // Session tracking for DB persistence
   const sessionStartTimeRef = useRef<number>(0)
   const formScoreSamplesRef = useRef<number[]>([])
@@ -938,6 +944,8 @@ const resetTestVideo = () => {
   // Reset internal tracking refs
   lastStateRef.current = ""
   hasVisitedPeakRef.current = false
+  repWasValidRef.current = false
+  repWasGoodRef.current = false
   stateChangeTimestampRef.current = 0
 
   angleFiltersRef.current.clear()
@@ -1017,6 +1025,8 @@ const stopTestMode = () => {
   // Reset internal tracking
   lastStateRef.current = ""
   hasVisitedPeakRef.current = false
+  repWasValidRef.current = false
+  repWasGoodRef.current = false
   stateChangeTimestampRef.current = 0
 
   angleFiltersRef.current.clear()
@@ -1275,17 +1285,25 @@ const startPoseLoop = () => {
                 // This handles intermediate states (start -> mid -> peak -> mid -> start)
                 if (mapped.id === peakId) {
                   hasVisitedPeakRef.current = true
-                }
-                if (mapped.id === startId && hasVisitedPeakRef.current) {
-                  // Track valid/good reps using the rep cycle peak
+                  // Record rep quality NOW while repCyclePeakRef still holds the
+                  // actual peak. By the time we return to startId (rep completion),
+                  // the threshold section will have already reset repCyclePeakRef
+                  // (when primaryVal drops below midpoint), so we can't check there.
                   const TOLERANCE = 0.9
                   const cycleP = repCyclePeakRef.current
-                  if (refPeakRef.current > 0 && cycleP >= refPeakRef.current * TOLERANCE) {
+                  repWasValidRef.current = refPeakRef.current > 0 && cycleP >= refPeakRef.current * TOLERANCE
+                  repWasGoodRef.current = idealPeakRef.current > 0 && cycleP >= idealPeakRef.current * TOLERANCE
+                }
+                if (mapped.id === startId && hasVisitedPeakRef.current) {
+                  // Use pre-recorded quality from peak detection time
+                  if (repWasValidRef.current) {
                     setLiveValidReps(v => v + 1)
                   }
-                  if (idealPeakRef.current > 0 && cycleP >= idealPeakRef.current * TOLERANCE) {
+                  if (repWasGoodRef.current) {
                     setLiveGoodReps(g => g + 1)
                   }
+                  repWasValidRef.current = false
+                  repWasGoodRef.current = false
 
                   setRepCount(prev => {
                     const newCount = prev + 1
@@ -1327,8 +1345,10 @@ const startPoseLoop = () => {
 
         let frameFormScore = 0
         let frameRepError: ReturnType<typeof calculateRepError> = null
-        if (learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
-          frameFormScore = computeFormScore(smoothedAngles, learnedTemplateRef.current, anglesOfInterest, sessionPrimary)
+        // Use learnedTemplateRef (which falls back to referenceTemplate if no local template)
+        const effectiveTemplate = learnedTemplateRef.current
+        if (effectiveTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
+          frameFormScore = computeFormScore(smoothedAngles, effectiveTemplate, anglesOfInterest, sessionPrimary)
           setFormScore(Math.round(frameFormScore))
           // Accumulate form score samples for session average (skip rest frames)
           if (frameFormScore > 0) {
@@ -1337,7 +1357,7 @@ const startPoseLoop = () => {
 
           frameRepError = calculateRepError(
             smoothedAngles,
-            learnedTemplateRef.current,
+            effectiveTemplate,
             anglesOfInterest,
             repCount + 1,
             ts / 1000
@@ -1369,6 +1389,11 @@ const startPoseLoop = () => {
               const r = s.angleRanges[primaryName]
               if (r && r.mean > idealPeak) idealPeak = r.mean
             }
+
+            // Sync refs so rep counting logic can use them
+            // (the useEffect init may miss these if referenceTemplate loads async)
+            refPeakRef.current = refPeak
+            idealPeakRef.current = idealPeak
 
             // Track peak angle in current rep cycle (sticky: once high, stays high until reset)
             if (primaryVal > repCyclePeakRef.current) {
@@ -1800,7 +1825,12 @@ useEffect(() => {
     }
 
   } catch (e) {
-    console.info("No learned template loaded for form scoring.")
+    console.info("No learned template loaded from storage.")
+  }
+
+  // Fall back to the reference template (doctor-recorded) if no local template
+  if (!learnedTemplateRef.current && referenceTemplate) {
+    learnedTemplateRef.current = referenceTemplate as import("@/lib/exercise-state-learner").LearnedExerciseTemplate
   }
 
   // Resolve the primary angle once at init
@@ -1809,19 +1839,8 @@ useEffect(() => {
     resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
   }
 
-  // Precompute reference/ideal peaks for session tracking
-  if (referenceTemplate && resolvedPrimaryRef.current) {
-    const primary = resolvedPrimaryRef.current
-    for (const s of referenceTemplate.states) {
-      const r = s.angleRanges[primary]
-      if (r && r.mean > refPeakRef.current) refPeakRef.current = r.mean
-    }
-    const effective = allowProgression && idealTemplate ? idealTemplate : referenceTemplate
-    for (const s of effective.states) {
-      const r = s.angleRanges[primary]
-      if (r && r.mean > idealPeakRef.current) idealPeakRef.current = r.mean
-    }
-  }
+  // Note: refPeakRef/idealPeakRef are synced in the per-frame render loop
+  // (threshold status section) where referenceTemplate is guaranteed available.
 
   // =============================
   // 🧹 CLEANUP ON UNMOUNT

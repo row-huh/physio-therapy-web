@@ -86,8 +86,19 @@ export default function ComparePage() {
         return
       }
 
-      // Compute a similarity score from form score (best proxy from real-time data)
-      const similarityScore = data.form_score
+      // Compute meaningful scores from real-time session data
+      const repsExpected = exercise.learnedTemplate?.recommendedReps ?? 0
+      const validRate = data.reps_completed > 0
+        ? Math.round((data.valid_reps / data.reps_completed) * 100)
+        : 0
+      // Similarity: 50% valid rep rate + 50% form score
+      const similarityScore = data.reps_completed > 0
+        ? Math.round((validRate * 0.5) + (data.form_score * 0.5))
+        : 0
+      // Progress: ratio of good (ideal ROM) reps to total reps
+      const progressScore = data.reps_completed > 0
+        ? Math.round((data.good_reps / data.reps_completed) * 100)
+        : 0
 
       const res = await fetch("/api/exercises/sessions", {
         method: "POST",
@@ -99,15 +110,13 @@ export default function ComparePage() {
           assignment_id: exercise.id,
           similarity_score: similarityScore,
           reps_completed: data.reps_completed,
-          reps_expected: exercise.learnedTemplate?.recommendedReps ?? 0,
+          reps_expected: repsExpected,
           state_matches: {},
           angle_deviations: {},
           duration_seconds: data.duration_seconds,
           valid_reps: data.valid_reps,
           good_reps: data.good_reps,
-          progress_score: data.valid_reps > 0
-            ? Math.round((data.good_reps / data.valid_reps) * 100)
-            : 0,
+          progress_score: progressScore,
           form_score: data.form_score,
         }),
       })
