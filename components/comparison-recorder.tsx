@@ -17,7 +17,6 @@ import {
 
 import { OneEuroFilter } from "@/lib/filters"
 import { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
-import { RealtimeFeedbackEngine } from "@/lib/feedback-generator"
 
 
 const getAudioFeedback = (lang: "en" | "ur") => ({
@@ -122,7 +121,6 @@ export function ComparisonRecorder({
   const poseRef = useRef<PoseLandmarker | null>(null)
   const rafRef = useRef<number | null>(null)
   const learnedTemplateRef = useRef<LearnedExerciseTemplate | null>(null)
-  const feedbackEngineRef = useRef<RealtimeFeedbackEngine | null>(null)
   // Locked primary angle — resolved once, used everywhere in the session
   const resolvedPrimaryRef = useRef<string | null>(null)
 
@@ -1413,29 +1411,6 @@ const startPoseLoop = () => {
         // (above) is the sole rep counter — prevents double-counting.
         if (!learnedTemplateRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
           updateRepCountFromSignal()
-        }
-
-        // Real-time feedback engine tick
-        // Lazy-init: use referenceTemplate prop or fall back to learnedTemplateRef
-        const effectiveRef = referenceTemplate ?? learnedTemplateRef.current
-        if (!feedbackEngineRef.current && effectiveRef && anglesOfInterest && anglesOfInterest.length > 0) {
-          feedbackEngineRef.current = new RealtimeFeedbackEngine({
-            exerciseType: exerciseType ?? "",
-            allowProgression: allowProgression ?? true,
-            referenceTemplate: effectiveRef,
-            idealTemplate: idealTemplate ?? null,
-            anglesOfInterest,
-            primaryAngleOverride: sessionPrimary,
-          })
-          console.log("🧠 Feedback engine initialized, primary:", sessionPrimary)
-        }
-        if (feedbackEngineRef.current) {
-          feedbackEngineRef.current.tick({
-            now: ts / 1000,
-            smoothedAngles,
-            repError: frameRepError,
-            formScore: frameFormScore,
-          })
         }
 
         drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
