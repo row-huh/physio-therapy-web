@@ -1735,41 +1735,14 @@ const drawAngleAnnotations = (
 // =============================
 // ⚙️ COMPONENT INITIALIZATION + CLEANUP
 // =============================
+
+
 useEffect(() => {
 
-  try {
-    // =============================
-    // 📚 LOAD LEARNED TEMPLATE
-    // =============================
-    if (exerciseType) {
-
-      const { getTemplatesByExerciseType } =
-        require("@/lib/template-storage")
-
-      const candidates =
-        getTemplatesByExerciseType(exerciseType)
-
-      const match = (
-        exerciseName
-          ? candidates.find((t: {
-              template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate
-            }) => t.template.exerciseName === exerciseName)
-          : candidates[candidates.length - 1]
-      ) || null
-
-      if (match) {
-        learnedTemplateRef.current = match.template
-        setTemplateName(match.template.exerciseName)
-      }
-    }
-
-  } catch (e) {
-    console.info("No learned template loaded from storage.")
-  }
-
-  // Fall back to the reference template (doctor-recorded) if no local template
-  if (!learnedTemplateRef.current && referenceTemplate) {
+  // Use reference template as learned template if provided
+  if (referenceTemplate) {
     learnedTemplateRef.current = referenceTemplate as import("@/lib/exercise-state-learner").LearnedExerciseTemplate
+    setTemplateName(referenceTemplate.exerciseName)
   }
 
   // Resolve the primary angle once at init
@@ -1781,9 +1754,7 @@ useEffect(() => {
   // Note: refPeakRef/idealPeakRef are synced in the per-frame render loop
   // (threshold status section) where referenceTemplate is guaranteed available.
 
-  // =============================
-  // 🧹 CLEANUP ON UNMOUNT
-  // =============================
+   // CLEANUP ON UNMOUNT
   return () => {
 
     // Stop webcam stream
@@ -1807,9 +1778,7 @@ useEffect(() => {
 
 }, [])
 
-  // =============================
   // FULLSCREEN RENDER MODE
-  // =============================
   if (fullscreen) {
     return (
       <div className="h-full w-full relative bg-black">
@@ -2420,9 +2389,7 @@ function updateTemplateRepCount(
 }
 
 
-// =============================
-// 📊 FORM SCORE COMPUTATION
-// =============================
+// FORM SCORE COMPUTATION
 // Calculates how close current pose is to template
 function computeFormScore(
   angles: JointAngleData,
@@ -2443,9 +2410,8 @@ function computeFormScore(
   if (candidates.length === 0) return 0
 
 
-  // =============================
-  // 🎯 FIND NEAREST STATE
-  // =============================
+  // FIND NEAREST STATE
+  
   const nearest = candidates.reduce((best, s) => {
 
     const m = s.angleRanges[primary].mean
@@ -2458,9 +2424,7 @@ function computeFormScore(
   }, candidates[0])
 
 
-  // =============================
-  // 📈 PER-ANGLE SCORING
-  // =============================
+  // PER-ANGLE SCORING
   let scores: number[] = []
 
   anglesOfInterest.forEach(name => {
