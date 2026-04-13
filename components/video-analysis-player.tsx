@@ -479,19 +479,6 @@ export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: 
     setIsPlaying(!isPlaying)
   }
 
-  const handleReset = () => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0
-      setIsPlaying(false)
-      // Reset all filters for fresh smoothing
-      landmarkFiltersRef.current.forEach((filter) => {
-        filter.x.reset()
-        filter.y.reset()
-        filter.z.reset()
-      })
-      landmarkFiltersRef.current.clear()
-    }
-  }
 
   return (
     <Card className="p-6">
@@ -518,19 +505,7 @@ export function VideoAnalysisPlayer({ videoBlob, movements, anglesOfInterest }: 
           />
         </div>
 
-        {!isLoading && (
-          <div className="mt-4 flex gap-3">
-            <Button onClick={handlePlayPause} className="flex-1">
-              {isPlaying ? "Pause" : "Play"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleReset}
-            >
-              Reset
-            </Button>
-          </div>
-        )}
+        
       </div>
 
       <div className="mt-4 text-xs text-muted-foreground">

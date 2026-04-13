@@ -247,25 +247,3 @@ export function analyzeRepTrends(repErrors: RepError[]): RepErrorSummary {
   }
 }
 
-
-export function getErrorFeedback(repError: RepError | null): string {
-  if (!repError) return "Keep moving..."
-
-  const { overallError, errors } = repError
-
-  if (overallError < 5) {
-    return "✓ Perfect form!"
-  } else if (overallError < 10) {
-    return "Good form, minor adjustments"
-  } else if (overallError < 20) {
-    const worstAngle = Object.entries(errors).reduce((worst, [name, error]) => 
-      error.error > worst.error ? { name, ...error } : worst
-    , { name: "", error: 0, expected: 0, actual: 0, percentError: 0 })
-
-    const direction = worstAngle.actual > worstAngle.expected ? "less" : "more"
-    const readableName = worstAngle.name.replace(/_/g, " ")
-    return `Adjust ${readableName} - ${direction} bend`
-  } else {
-    return "⚠ Check your form"
-  }
-}

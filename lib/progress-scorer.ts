@@ -180,7 +180,7 @@ export function scoreSession(
     }
   }
 
-  // ── Determine ROM direction ───────────────────────────────────────
+  // Determine ROM direction
   // For some exercises the "peak" is high (e.g. knee extension → ~170°),
   // for others the meaningful extreme might be the trough.
   // We use the range (peak - trough) to decide: if the peak is the
@@ -192,7 +192,7 @@ export function scoreSession(
 
   const TOLERANCE = 0.9 // 10% tolerance
 
-  // ── Score each patient state as a "rep" ───────────────────────────
+  // Score each patient state as a "rep" 
   // The patient template's states represent the key poses detected
   // during their exercise. Each state with a primary angle above the
   // reference peak counts as a valid rep attempt.
@@ -231,7 +231,7 @@ export function scoreSession(
   const peakOccurrences = patientPeakState?.occurrences ?? []
   const detectedReps = Math.max(totalReps, peakOccurrences.length)
 
-  // ── Build per-rep details ─────────────────────────────────────────
+  // Build per-rep details 
   const perRepDetails: RepDetail[] = []
   let validCount = 0
   let goodCount = 0

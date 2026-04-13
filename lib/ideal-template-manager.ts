@@ -1,3 +1,5 @@
+// when progression = True in exercises then fetch the ideal template for the relevant exercise
+
 import { supabase } from "@/utils/supabase/client"
 import type { LearnedExerciseTemplate } from "./exercise-state-learner"
 

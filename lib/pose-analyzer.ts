@@ -1,4 +1,4 @@
-import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision"
+import { PoseLandmarker, FilesetResolver } from "@mediapipe/tasks-vision"
 import { OneEuroFilter } from "@/lib/filters"
 
 export interface JointAngle {

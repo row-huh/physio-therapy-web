@@ -227,7 +227,7 @@ function countRepetitions(
     // For bilateral, we'll compute average angles for state determination
     // But use the first available angle for now as primary
     const jointTypes = leftAngles.map(name => name.replace('left_', ''))
-    console.log(`🔄 Bilateral exercise detected with joint types: ${jointTypes.join(', ')}`)
+    console.log(`Bilateral exercise detected with joint types: ${jointTypes.join(', ')}`)
     primaryAngle = leftAngles[0] // Use left side as primary reference
   }
   
@@ -250,7 +250,7 @@ function countRepetitions(
     })
   
   if (statesByAngle.length === 0) {
-    console.warn("⚠️ No states with angle data found")
+    console.warn("No states with angle data found")
     return 1
   }
   
@@ -283,8 +283,8 @@ function countRepetitions(
     ? (peakState.angleRanges[primaryAngle].mean + (peakState.angleRanges[primaryAngle.replace('left', 'right')]?.mean || peakState.angleRanges[primaryAngle].mean)) / 2
     : peakState.angleRanges[primaryAngle].mean)
   
-  console.log(`🎯 Start state: ${actualStartState.name} (${startAngleDisplay}°)`)
-  console.log(`🎯 Peak state: ${peakState.name} (${peakAngleDisplay}°)`)
+  console.log(`Start state: ${actualStartState.name} (${startAngleDisplay}°)`)
+  console.log(`Peak state: ${peakState.name} (${peakAngleDisplay}°)`)
   
   // Count complete cycles: start → peak → start (or back to start)
   // A rep is counted when we return to the start state after visiting the peak
@@ -308,7 +308,7 @@ function countRepetitions(
     if (currentState === actualStartState.id && hasVisitedPeak) {
       repCount++
       hasVisitedPeak = false
-      console.log(`  ✅ Rep ${repCount} completed at position ${i}`)
+      console.log(` Rep ${repCount} completed at position ${i}`)
     }
     
     lastState = currentState
@@ -316,13 +316,13 @@ function countRepetitions(
   
   // If we ended at peak or in transition, count it as a partial rep (round up)
   if (hasVisitedPeak && repCount > 0) {
-    console.log(`  ⚡ Partial rep detected (ended at peak)`)
+    console.log(`  Partial rep detected (ended at peak)`)
     repCount++
   }
   
   // Fallback: if cycle counting failed, use occurrence counting for the start state
   if (repCount === 0) {
-    console.warn("⚠️ Cycle counting failed, using fallback method")
+    console.warn("Cycle counting failed, using fallback method")
     repCount = Math.max(1, actualStartState.occurrences.length)
   }
   
@@ -338,7 +338,7 @@ export function learnExerciseStates(
   exerciseType: string,
   anglesOfInterest: string[]
 ): LearnedExerciseTemplate {
-  console.log("🧠 Learning exercise states from video data...")
+  console.log("Learning exercise states from video data...")
   console.log(`Analyzing ${jointAngles.length} data points`)
   console.log(`Angles of interest:`, anglesOfInterest)
   
@@ -368,12 +368,12 @@ export function learnExerciseStates(
   
   // Check if we have enough data
   if (dataVectors.length === 0) {
-    console.error("❌ No data vectors created - no angle data found")
+    console.error("No data vectors created - no angle data found")
     throw new Error("No angle data found for the specified angles of interest")
   }
   
   if (frames.length < 10) {
-    console.warn("⚠️ Very few frames detected, results may be unreliable")
+    console.warn("Very few frames detected, results may be unreliable")
   }
   
   // Determine optimal number of clusters (states)
@@ -461,7 +461,7 @@ export function learnExerciseStates(
     a.occurrences[0].startTime - b.occurrences[0].startTime
   )
   
-  console.log(`✅ Detected ${detectedStates.length} states:`)
+  console.log(`Detected ${detectedStates.length} states:`)
   detectedStates.forEach((state, idx) => {
     console.log(`  ${idx + 1}. ${state.name} - ${state.occurrences.length} occurrences`)
   })
@@ -525,7 +525,7 @@ export function learnExerciseStates(
   
   const estimatedReps = countRepetitions(detectedStates, stateSequence, angleNames)
   
-  console.log(`💪 Counted ${estimatedReps} repetitions`)
+  console.log(`Counted ${estimatedReps} repetitions`)
   
   return {
     exerciseName,

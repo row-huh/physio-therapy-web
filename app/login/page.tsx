@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
-  // 👁️ toggle state
+  //  toggle state
   const [showPassword, setShowPassword] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -57,10 +57,9 @@ return (
       </div>
 
 
-      {/* ===================== CARD ===================== */}
       <Card className="rounded-2xl border shadow-sm">
 
-        {/* ===== TITLE ===== */}
+        {/* Title */}
         <CardHeader>
           <CardTitle className="text-center text-xl font-semibold">
             Log In
@@ -68,12 +67,11 @@ return (
         </CardHeader>
 
 
-        {/* ===================== CONTENT ===================== */}
         <CardContent className="space-y-4">
 
           <form onSubmit={handleLogin} className="space-y-4">
 
-            {/* ===== EMAIL ===== */}
+            {/* email */}
             <div className="space-y-1">
               <label className="text-sm font-medium">Email</label>
               <Input
@@ -86,7 +84,7 @@ return (
             </div>
 
 
-            {/* ===== PASSWORD ===== */}
+            {/* password+ see password */}
             <div className="space-y-1">
               <label className="text-sm font-medium">Password</label>
 
@@ -111,7 +109,7 @@ return (
             </div>
 
 
-            {/* ===== ERROR ===== */}
+            {/* error */}
             {error && (
               <p className="text-sm text-destructive text-center">
                 {error}
@@ -119,7 +117,7 @@ return (
             )}
 
 
-            {/* ===== BUTTON ===== */}
+            {/* log in */}
             <Button type="submit" disabled={loading} className="w-full">
               {loading ? "Logging in..." : "Log In"}
             </Button>
@@ -127,7 +125,7 @@ return (
           </form>
 
 
-          {/* ===== SIGNUP LINK ===== */}
+          {/* Signup Link */}
           <p className="text-center text-sm text-muted-foreground">
             Don&apos;t have an account?{" "}
             <Link href="/signup" className="text-primary hover:underline">
