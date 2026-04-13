@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState, useEffect } from "react"
-import { PoseLandmarker, FilesetResolver, DrawingUtils, PoseLandmarkerResult } from "@mediapipe/tasks-vision"
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -10,7 +10,6 @@ import { RepErrorGraph } from "@/components/rep-error-graph"
 import {
   calculateRepError,
   analyzeRepTrends,
-  getErrorFeedback,
   type RepError,
   type RepErrorSummary
 } from "@/lib/rep-error-calculator"
@@ -33,12 +32,6 @@ const getAudioFeedback = (lang: "en" | "ur") => ({
     level: `/audio/scap/${lang}/level.mp3`,
   }
 })
-
-
-
-const templateLastStateRef: { current: string | null } = { current: null }
-const templateVisitedPeakRef: { current: boolean } = { current: false }
-const templateLastChangeTsRef: { current: number } = { current: 0 }
 
 
 
@@ -65,19 +58,6 @@ interface ComparisonRecorderProps {
 
 
 const POSE_LANDMARKS = {
-  // Face
-  NOSE: 0,
-  LEFT_EYE_INNER: 1,
-  LEFT_EYE: 2,
-  LEFT_EYE_OUTER: 3,
-  RIGHT_EYE_INNER: 4,
-  RIGHT_EYE: 5,
-  RIGHT_EYE_OUTER: 6,
-  LEFT_EAR: 7,
-  RIGHT_EAR: 8,
-  MOUTH_LEFT: 9,
-  MOUTH_RIGHT: 10,
-
   // Body
   LEFT_SHOULDER: 11,
   RIGHT_SHOULDER: 12,
@@ -100,7 +80,6 @@ interface JointAngleData {
 }
 
 export function ComparisonRecorder({
-  onVideoRecorded,
   onSessionEnd,
   anglesOfInterest,
   exerciseName,
@@ -162,8 +141,6 @@ export function ComparisonRecorder({
 
   const [currentAngles, setCurrentAngles] = useState<JointAngleData>({})
   const [repCount, setRepCount] = useState(0)
-  const [correctRepCount, setCorrectRepCount] = useState(0)
-  const [incorrectRepCount, setIncorrectRepCount] = useState(0)
 
   const [currentState, setCurrentState] = useState<string>("")
   const [templateState, setTemplateState] = useState<string>("")
@@ -188,17 +165,9 @@ export function ComparisonRecorder({
  
  
 
-  const [formScore, setFormScore] = useState<number>(0)
-  const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
-  const [errorFeedback, setErrorFeedback] = useState<string>("")
-  const [templateName, setTemplateName] = useState<string>("")
-
-
-
   const [liveThresholdStatus, setLiveThresholdStatus] =
     useState<"below" | "valid" | "good" | "rest">("rest")
 
-  const [livePrimaryAngle, setLivePrimaryAngle] = useState<number | null>(null)
   const [liveValidReps, setLiveValidReps] = useState(0)
   const [liveGoodReps, setLiveGoodReps] = useState(0)
 
@@ -241,18 +210,6 @@ export function ComparisonRecorder({
   const stateChangeTimestampRef = useRef<number>(0)
   const lastRepTimestampRef = useRef<number | null>(null)
 
-  const minAngleSeenRef = useRef<number>(Infinity)
-  const maxAngleSeenRef = useRef<number>(-Infinity)
-  const hasLearnedThresholdsRef = useRef<boolean>(false)
-
-  const templateLastStateRef = useRef<string>("")
-  const templateLastChangeTsRef = useRef<number>(0)
-  const templateVisitedPeakRef = useRef<boolean>(false)
-
-
-
-
-  const MIN_EXTENDED_HOLD = 0.2
   const MIN_REP_COOLDOWN = 0.6
   const MIN_PEAK_DELTA = 15
 
@@ -547,29 +504,6 @@ const calculateAllAngles = (landmarks: any[]): JointAngleData => {
 
 
 
-    //  HEAD ORIENTATION - to be removed (not planned)
-
-    const nose = getLandmark(POSE_LANDMARKS.NOSE)
-    const leftEye = getLandmark(POSE_LANDMARKS.LEFT_EYE_OUTER)
-    const rightEye = getLandmark(POSE_LANDMARKS.RIGHT_EYE_OUTER)
-
-    const leftDist = Math.sqrt(
-      Math.pow(nose[0] - leftEye[0], 2) +
-      Math.pow(nose[1] - leftEye[1], 2)
-    )
-
-    const rightDist = Math.sqrt(
-      Math.pow(nose[0] - rightEye[0], 2) +
-      Math.pow(nose[1] - rightEye[1], 2)
-    )
-
-    const ratio = leftDist / rightDist
-
-    angles.head_yaw =
-      Math.atan((ratio - 1) / 0.5) * (180 / Math.PI)
-
-    angles.nose_horizontal = (nose[0] * 2 - 1 + 1) * 90
-
   } catch (e) {
     console.warn("Error calculating some angles:", e)
   }
@@ -725,12 +659,6 @@ const updateRepCount = (state: string) => {
         // Evaluate rep quality
         const isCorrect = classifyRepQuality(cycle, primaryName)
         const minMax = computeRepMinMax(cycle, primaryName)
-
-        if (isCorrect) {
-          setCorrectRepCount(c => c + 1)
-        } else {
-          setIncorrectRepCount(c => c + 1)
-        }
 
         // Store rep details for UI / analysis
         if (minMax) {
@@ -1067,15 +995,17 @@ const startPoseLoop = () => {
   if (!ctx) return
 
   const drawer = new DrawingUtils(ctx)
-  let frameCount = 0
+
+  // Pre-compute template state list once per session (avoids spread on every frame)
+  const allTemplateStates = referenceTemplate
+    ? [...referenceTemplate.states, ...(idealTemplate?.states ?? [])]
+    : []
 
 
   // FRAME RENDER FUNCTION
   const render = () => {
 
     if (!videoRef.current || !poseRef.current || !canvasRef.current) return
-
-    frameCount++
 
     // SYNC CANVAS SIZE WITH VIDEO
     // this tries to get the mediapipe's pose skeleton on the exact place where the perons's limbs are . This was a 
@@ -1109,22 +1039,6 @@ const startPoseLoop = () => {
       const smoothedAngles = smoothAngles(rawAngles, ts / 1000)
 
 
-
-      // TODO: remove head yaw - out of scope but not demo-ing this anyway
-      // DEBUG (HEAD YAW TRACKING)
-      if (
-        anglesOfInterest &&
-        anglesOfInterest[0] === "head_yaw" &&
-        frameCount % 30 === 0
-      ) {
-        console.log(
-          'Head yaw:',
-          smoothedAngles.head_yaw?.toFixed(1),
-          'Min:', minAngleSeenRef.current.toFixed(1),
-          'Max:', maxAngleSeenRef.current.toFixed(1),
-          'Thresholds learned:', hasLearnedThresholdsRef.current
-        )
-      }
 
       // Update UI state
       setCurrentAngles(smoothedAngles)
@@ -1305,27 +1219,13 @@ const startPoseLoop = () => {
           }
         }
 
-        let frameFormScore = 0
-        let frameRepError: ReturnType<typeof calculateRepError> = null
-        // Use learnedTemplateRef (which falls back to referenceTemplate if no local template)
+        // Accumulate form score samples for session average
         const effectiveTemplate = learnedTemplateRef.current
         if (effectiveTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
-          frameFormScore = computeFormScore(smoothedAngles, effectiveTemplate, anglesOfInterest, sessionPrimary)
-          setFormScore(Math.round(frameFormScore))
-          // Accumulate form score samples for session average (skip rest frames)
+          const frameFormScore = computeFormScore(smoothedAngles, effectiveTemplate, anglesOfInterest, sessionPrimary)
           if (frameFormScore > 0) {
             formScoreSamplesRef.current.push(frameFormScore)
           }
-
-          frameRepError = calculateRepError(
-            smoothedAngles,
-            effectiveTemplate,
-            anglesOfInterest,
-            repCount + 1,
-            ts / 1000
-          )
-          setCurrentRepError(frameRepError)
-          setErrorFeedback(getErrorFeedback(frameRepError))
         }
 
         // ── Dual-threshold live feedback (phase-aware) ──
@@ -1333,7 +1233,6 @@ const startPoseLoop = () => {
           const primaryName = sessionPrimary
           const primaryVal = smoothedAngles[primaryName]
           if (primaryVal !== undefined) {
-            setLivePrimaryAngle(primaryVal)
             // Extract reference peak (highest angle) and start (lowest angle)
             let refPeak = 0
             let refStart = Infinity
@@ -1366,13 +1265,8 @@ const startPoseLoop = () => {
             const midpoint = (refStart + refPeak) / 2
 
             // Validate that the person is actually in a recognized exercise position.
-            // Collect all template states (reference + ideal) and check if current
-            // angles fall within the known ranges. Prevents false "Ideal ROM reached"
-            // when e.g. standing with straight legs during a seated knee extension.
-            const allTemplateStates = [
-              ...referenceTemplate.states,
-              ...(idealTemplate?.states ?? []),
-            ]
+            // Checks current angles against the pre-computed template state list.
+            // Prevents false "Ideal ROM reached" when not performing the exercise.
             const inExerciseRange = isWithinExerciseRange(
               smoothedAngles,
               allTemplateStates,
@@ -1646,89 +1540,43 @@ const drawAngleAnnotations = (
   if (!anglesOfInterest || anglesOfInterest.length === 0) return
 
   const primaryAngle = resolvedPrimaryRef.current ?? anglesOfInterest[0]
-  const primaryValue = angles[primaryAngle]
 
-  // head/yaw to be removed later
+  // Maps angle name → landmark index + label offsets
+  const angleToLandmarkMap: {
+    [key: string]: { landmark: number; offsetX: number; offsetY: number }
+  } = {
+    'left_knee':      { landmark: POSE_LANDMARKS.LEFT_KNEE,      offsetX: -65, offsetY: -10 },
+    'right_knee':     { landmark: POSE_LANDMARKS.RIGHT_KNEE,     offsetX:  15, offsetY: -10 },
+    'left_elbow':     { landmark: POSE_LANDMARKS.LEFT_ELBOW,     offsetX: -65, offsetY: -10 },
+    'right_elbow':    { landmark: POSE_LANDMARKS.RIGHT_ELBOW,    offsetX:  15, offsetY: -10 },
+    'left_shoulder':  { landmark: POSE_LANDMARKS.LEFT_SHOULDER,  offsetX: -75, offsetY: -10 },
+    'right_shoulder': { landmark: POSE_LANDMARKS.RIGHT_SHOULDER, offsetX:  15, offsetY: -10 },
+    'left_hip':       { landmark: POSE_LANDMARKS.LEFT_HIP,       offsetX: -65, offsetY: -10 },
+    'right_hip':      { landmark: POSE_LANDMARKS.RIGHT_HIP,      offsetX:  15, offsetY: -10 },
+  }
 
-  // =============================
-  // 🎯 DRAW PRIMARY ANGLE (FACE / BODY)
-  // =============================
-  if (primaryValue !== undefined) {
-
-    const isFaceExercise =
-      primaryAngle === "head_yaw" ||
-      primaryAngle === "nose_horizontal"
-
-    // =============================
-    // 🧠 FACE-BASED ANGLES (HEAD)
-    // =============================
-    if (isFaceExercise) {
-
-      const nose = landmarks[POSE_LANDMARKS.NOSE]
+  anglesOfInterest
+    .filter(angleName =>
+      angles[angleName] !== undefined &&
+      angleToLandmarkMap[angleName]
+    )
+    .forEach(angleName => {
+      const config = angleToLandmarkMap[angleName]
+      const joint = landmarks[config.landmark]
+      if (!joint) return
 
       ctx.fillStyle = "#00ffff"
-      ctx.font = "bold 24px Arial"
+      ctx.font = "bold 20px Arial"
       ctx.strokeStyle = "#000000"
-      ctx.lineWidth = 5
+      ctx.lineWidth = 4
 
-      const text =
-        `${primaryAngle.replace('_', ' ')}: ${Math.round(primaryValue)}°`
-
-      const x = nose.x * width + 20
-      const y = nose.y * height - 20
+      const text = `${Math.round(angles[angleName])}°`
+      const x = joint.x * width + config.offsetX
+      const y = joint.y * height + config.offsetY
 
       ctx.strokeText(text, x, y)
       ctx.fillText(text, x, y)
-
-    } else {
-
-// body joint label mapping
-      // Maps angle → landmark position + offsets
-      const angleToLandmarkMap: {
-        [key: string]: {
-          landmark: number
-          offsetX: number
-          offsetY: number
-        }
-      } = {
-        'left_knee': { landmark: POSE_LANDMARKS.LEFT_KNEE, offsetX: -65, offsetY: -10 },
-        'right_knee': { landmark: POSE_LANDMARKS.RIGHT_KNEE, offsetX: 15, offsetY: -10 },
-        'left_elbow': { landmark: POSE_LANDMARKS.LEFT_ELBOW, offsetX: -65, offsetY: -10 },
-        'right_elbow': { landmark: POSE_LANDMARKS.RIGHT_ELBOW, offsetX: 15, offsetY: -10 },
-        'left_shoulder': { landmark: POSE_LANDMARKS.LEFT_SHOULDER, offsetX: -75, offsetY: -10 },
-        'right_shoulder': { landmark: POSE_LANDMARKS.RIGHT_SHOULDER, offsetX: 15, offsetY: -10 },
-        'left_hip': { landmark: POSE_LANDMARKS.LEFT_HIP, offsetX: -65, offsetY: -10 },
-        'right_hip': { landmark: POSE_LANDMARKS.RIGHT_HIP, offsetX: 15, offsetY: -10 },
-      }
-
-      anglesOfInterest
-        .filter(angleName =>
-          angles[angleName] !== undefined &&
-          angleToLandmarkMap[angleName]
-        )
-        .forEach(angleName => {
-
-          const config = angleToLandmarkMap[angleName]
-          const joint = landmarks[config.landmark]
-
-          if (joint) {
-
-            ctx.fillStyle = "#00ffff"
-            ctx.font = "bold 20px Arial"
-            ctx.strokeStyle = "#000000"
-            ctx.lineWidth = 4
-
-            const text = `${Math.round(angles[angleName])}°`
-
-            const x = joint.x * width + config.offsetX
-            const y = joint.y * height + config.offsetY
-
-            ctx.strokeText(text, x, y)
-            ctx.fillText(text, x, y)
-          }
-        })
-    }
-  }
+    })
 }
 
 
@@ -1742,7 +1590,6 @@ useEffect(() => {
   // Use reference template as learned template if provided
   if (referenceTemplate) {
     learnedTemplateRef.current = referenceTemplate as import("@/lib/exercise-state-learner").LearnedExerciseTemplate
-    setTemplateName(referenceTemplate.exerciseName)
   }
 
   // Resolve the primary angle once at init
@@ -2323,72 +2170,6 @@ function resolvePrimaryAngle(
 
 
 
-
-
-
-// template rep counte
-function updateTemplateRepCount(
-  mappedStateId: string | null,
-  timestamp: number,
-  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
-) {
-
-  if (!mappedStateId) return
-
-  const MIN_STATE_DURATION = 0.2
-  const last = templateLastStateRef.current
-
-  if (mappedStateId !== last) {
-
-    const dt = timestamp - templateLastChangeTsRef.current
-
-    if (dt < MIN_STATE_DURATION && last) return
-
-    const primary = anglesOfInterest[0]
-
-    const sortable = template.states.filter(
-      s => s.angleRanges[primary]
-    )
-
-    if (sortable.length < 2) {
-      templateLastStateRef.current = mappedStateId
-      templateLastChangeTsRef.current = timestamp
-      return
-    }
-
-    const sorted = [...sortable].sort(
-      (a, b) =>
-        a.angleRanges[primary].mean -
-        b.angleRanges[primary].mean
-    )
-
-    const startId = sorted[0].id
-    const peakId = sorted[sorted.length - 1].id
-
-
-    // peak is detected
-    if (mappedStateId === peakId && last === startId) {
-      templateVisitedPeakRef.current = true
-    }
-
-
-// rep is completed if start --> peak --> start cycle is completed
-    if (
-      mappedStateId === startId &&
-      templateVisitedPeakRef.current &&
-      last === peakId
-    ) {
-
-
-    }
-
-    templateLastStateRef.current = mappedStateId
-    templateLastChangeTsRef.current = timestamp
-  }
-}
-
-
 // FORM SCORE COMPUTATION
 // Calculates how close current pose is to template
 function computeFormScore(
@@ -2410,18 +2191,13 @@ function computeFormScore(
   if (candidates.length === 0) return 0
 
 
-  // FIND NEAREST STATE
-  
-  const nearest = candidates.reduce((best, s) => {
-
-    const m = s.angleRanges[primary].mean
-    const d = Math.abs(cur - m)
-
-    return (!best || d < Math.abs(cur - best.angleRanges[primary].mean))
-      ? s
-      : best
-
-  }, candidates[0])
+  // FIND NEAREST STATE (O(n) linear scan)
+  let minDist = Infinity
+  let nearest = candidates[0]
+  for (const s of candidates) {
+    const d = Math.abs(cur - s.angleRanges[primary].mean)
+    if (d < minDist) { minDist = d; nearest = s }
+  }
 
 
   // PER-ANGLE SCORING
@@ -2524,40 +2300,31 @@ function mapToTemplateState(
   if (candidates.length === 0) return null
 
 
-  // Use Euclidean distance across all angles for robust matching
-  const nearest = candidates.reduce((best, state) => {
+  // Use Euclidean distance across all angles for robust matching (O(n) scan)
+  let minDist = Infinity
+  let nearest = candidates[0]
 
-    const calculateDistance = (s: typeof state) => {
+  for (const state of candidates) {
+    let sumSquaredDiff = 0
+    let count = 0
 
-      let sumSquaredDiff = 0
-      let count = 0
-
-      anglesOfInterest.forEach(angle => {
-
-        const range = s.angleRanges[angle]
-        const val = angles[angle]
-
-        if (range && val !== undefined) {
-
-          const diff = val - range.mean
-          const scale = range.stdDev > 0 ? range.stdDev : 10
-
-          sumSquaredDiff += Math.pow(diff / scale, 2)
-          count++
-        }
-      })
-
-      return count > 0
-        ? Math.sqrt(sumSquaredDiff / count)
-        : Infinity
+    for (const angle of anglesOfInterest) {
+      const range = state.angleRanges[angle]
+      const val = angles[angle]
+      if (range && val !== undefined) {
+        const diff = val - range.mean
+        const scale = range.stdDev > 0 ? range.stdDev : 10
+        sumSquaredDiff += (diff / scale) ** 2
+        count++
+      }
     }
 
-    const currentDist = calculateDistance(state)
-    const bestDist = calculateDistance(best)
-
-    return currentDist < bestDist ? state : best
-
-  }, candidates[0])
+    const dist = count > 0 ? Math.sqrt(sumSquaredDiff / count) : Infinity
+    if (dist < minDist) {
+      minDist = dist
+      nearest = state
+    }
+  }
 
   return { id: nearest.id, name: nearest.name }
 }
