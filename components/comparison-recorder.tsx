@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
 import { RepErrorGraph } from "@/components/rep-error-graph"
-
 import {
   calculateRepError,
   analyzeRepTrends,
@@ -35,6 +34,13 @@ const getAudioFeedback = (lang: "en" | "ur") => ({
     level: `/audio/scap/${lang}/level.mp3`,
   }
 })
+
+
+
+const templateLastStateRef: { current: string | null } = { current: null }
+const templateVisitedPeakRef: { current: boolean } = { current: false }
+const templateLastChangeTsRef: { current: number } = { current: 0 }
+
 
 
 export interface SessionEndData {
@@ -132,7 +138,7 @@ export function ComparisonRecorder({
     //Prevent repeating same instruction
     if (lastSpokenRef.current === label) return
 
-    // ⏱ Prevent too frequent playback
+    // Prevent too frequent playback
     if (now - lastAudioTimeRef.current < 2500) return
 
     lastAudioTimeRef.current = now
@@ -151,7 +157,7 @@ export function ComparisonRecorder({
 
 
 
- const [isStreaming, setIsStreaming] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [language, setLanguage] = useState<"en" | "ur">("en")
 
@@ -183,11 +189,11 @@ export function ComparisonRecorder({
 
  
  
+
   const [formScore, setFormScore] = useState<number>(0)
   const [currentRepError, setCurrentRepError] = useState<RepError | null>(null)
   const [errorFeedback, setErrorFeedback] = useState<string>("")
   const [templateName, setTemplateName] = useState<string>("")
-
 
 
 
@@ -286,9 +292,7 @@ export function ComparisonRecorder({
   }>({ phase: 'idle' })
 
 
-  // =============================
-  //  REP QUALITY CLASSIFICATION
-  // =============================
+// Rep quality classification
   const classifyRepQuality = (
     cycleHistory: Array<{ timestamp: number; angles: JointAngleData }>,
     primaryAngleName?: string
@@ -308,29 +312,30 @@ export function ComparisonRecorder({
     const maxAngle = Math.max(...values)
     const minAngle = Math.min(...values)
 
-    // 🎯 Expected ROM thresholds
-    const EXTENDED_MIN = 150
-    const REST_MAX = 90
+    // Expected ROM thresholds
+    const EXTENDED_MIN = 150  // TODO: extract from db ? why are we using hardcoded ones?
+    const REST_MAX = 90  // don't allow a rest timer - allow the user to rest as much as required
 
     const isExtendedReached = maxAngle >= EXTENDED_MIN
     const isRestReached = minAngle <= REST_MAX
 
     return isExtendedReached && isRestReached
   }
- // =============================
-// 📊 REP RANGE ANALYSIS
-// =============================
+
+
+
+// Rep Range Analysis
 // Calculates min & max angle for a completed rep cycle
 const computeRepMinMax = (
   cycleHistory: Array<{ timestamp: number; angles: JointAngleData }>,
   primaryAngleName?: string
 ): { min: number; max: number; primary: string } | null => {
 
-  // 🎯 Select primary joint (fallback to right_knee)
+  // Select primary joint (fallback to right_knee)
   const name =
     primaryAngleName ||
     (anglesOfInterest && anglesOfInterest[0]) ||
-    "right_knee"
+    "right_knee"                                    // why is this hardcoded for knee? We will be performing exercises
 
   // Extract valid angle values
   const values = cycleHistory
@@ -349,10 +354,8 @@ const computeRepMinMax = (
 }
 
 
-// =============================
-// 🧍 POSE SKELETON CONNECTIONS
-// =============================
-// Defines how landmarks are connected (for drawing skeleton)
+
+// helper to draw skeleton (connecting relevant joints with a line. These are 2 joint segments line. 3 joint angles are basically just two 2-joint angles)
 const POSE_CONNECTIONS = [
   { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 7 },
   { start: 0, end: 4 }, { start: 4, end: 5 }, { start: 5, end: 6 }, { start: 6, end: 8 },
@@ -377,9 +380,8 @@ const POSE_CONNECTIONS = [
 ]
 
 
-// =============================
-// 📐 ANGLE CALCULATION (JOINT)
-// =============================
+
+// 3 point angle joint calculations 
 // Calculates angle between 3 points (A-B-C)
 const calculateAngle = (a: number[], b: number[], c: number[]): number => {
 
@@ -398,10 +400,8 @@ const calculateAngle = (a: number[], b: number[], c: number[]): number => {
 }
 
 
-// =============================
-// 📐 SEGMENT ANGLE (VERTICAL)
-// =============================
 // Calculates angle of a limb segment relative to vertical axis
+// this is to find out the tilt of any segment relative to the true y-axis 
 const calculateSegmentAngleFromVertical = (
   start: number[],
   end: number[]
@@ -417,9 +417,7 @@ const calculateSegmentAngleFromVertical = (
 }
 
 
-// =============================
-// 🧠 FULL BODY ANGLE EXTRACTION
-// =============================
+// angle extraction 
 // Converts pose landmarks → biomechanical joint angles
 const calculateAllAngles = (landmarks: any[]): JointAngleData => {
 
@@ -427,7 +425,7 @@ const calculateAllAngles = (landmarks: any[]): JointAngleData => {
 
   // Helper to extract (x, y)
   const getLandmark = (index: number) => [
-    landmarks[index].x,
+    landmarks[index].x,     // does this help with drawing skeletons?
     landmarks[index].y
   ]
 
@@ -537,7 +535,7 @@ const calculateAllAngles = (landmarks: any[]): JointAngleData => {
 
 
    
-    // ✋ FOREARM SEGMENTS
+    // FOREARM SEGMENTS
     
     angles.left_forearm_segment = calculateSegmentAngleFromVertical(
       getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
@@ -551,7 +549,7 @@ const calculateAllAngles = (landmarks: any[]): JointAngleData => {
 
 
 
-    //  HEAD ORIENTATION
+    //  HEAD ORIENTATION - to be removed (not planned)
 
     const nose = getLandmark(POSE_LANDMARKS.NOSE)
     const leftEye = getLandmark(POSE_LANDMARKS.LEFT_EYE_OUTER)
@@ -580,13 +578,13 @@ const calculateAllAngles = (landmarks: any[]): JointAngleData => {
 
   return angles
 }
-  // ROHA TO FUTURE ROHA: THIS IS PROBABLY MAKING THE KNEE ANGLES WEIRD
-  // despite the angle moving with the knee there's some stiffness idk
-  // the knee angle wouldn't follow the leg properly if that makes sense and this is probably the problem 
- // =============================
-//  ANGLE SMOOTHING (NOISE REDUCTION)
-// =============================
+
+
+
 // Uses OneEuroFilter to smooth noisy angle signals in real-time
+// This is to keep the angle-values that are being read stable to reduce jitter/fluctuation in the calculations. if the angles move around too frequently, 
+// it messes up the calculations a lil
+
 const smoothAngles = (
   rawAngles: JointAngleData,
   timestamp: number
@@ -611,9 +609,8 @@ const smoothAngles = (
 }
 
 
-// =============================
-// EXERCISE STATE CLASSIFICATION
-// =============================
+// state classification for exercises
+// TODO: why is this happening hardcoded - why aren't we using clusters we learnt??
 // Converts continuous angle → discrete states (flexed / extended / transition)
 const determineExerciseState = (angles: JointAngleData): string => {
 
@@ -627,8 +624,9 @@ const determineExerciseState = (angles: JointAngleData): string => {
 
   // thresholds here are assumed - because it makes it easier to run state detection later on 
   // state detection then knows what to look for
+  // TODO: that doesn't sound right, hardcoded angles for states doesn't sound like a good idea
 
-  // 🎯 State classification based on angle thresholds
+  // State classification based on angle thresholds
   if (angle < 70) {
     return "flexed"
   } else if (angle > 150) {
@@ -639,9 +637,8 @@ const determineExerciseState = (angles: JointAngleData): string => {
 }
 
 
-// =============================
 // REP COUNTING (FSM + VELOCITY + HYSTERESIS)
-// =============================
+// TODO: too complicated, i think a few million of my braincells just died
 // Advanced rep detection independent of simple state labels
 const updateRepCount = (state: string) => {
 
@@ -669,7 +666,7 @@ const updateRepCount = (state: string) => {
 
   const nowTs = last.timestamp
 
-  // 📈 Velocity of movement (angle change)
+  // Velocity of movement (angle change)
   const vel = a - b
 
   const fsm = repFSMRef.current
@@ -702,9 +699,7 @@ const updateRepCount = (state: string) => {
       fsm.lastPeak = a
     }
 
-    // =============================
-    // DOWNWARD PHASE (FLEXION)
-    // =============================
+    // downward phase flexion
     if (a <= getRepThresholds().down && vel < 0) {
 
       // Compute rep characteristics
@@ -717,7 +712,7 @@ const updateRepCount = (state: string) => {
         lastRepTimestampRef.current === null ||
         (nowTs - lastRepTimestampRef.current) >= MIN_REP_COOLDOWN
 
-      // 🎯 Valid rep condition
+      // Valid rep condition
       if (delta >= MIN_PEAK_DELTA && cooledDown) {
 
         // Increment rep count
@@ -770,9 +765,8 @@ const updateRepCount = (state: string) => {
   lastStateRef.current = state
 }
 
-  // =============================
-//  WEBCAM INITIALIZATION
-// =============================
+
+// webcam init
 // Starts live camera feed and pose detection
 const openWebcam = async () => {
 
@@ -820,9 +814,7 @@ const openWebcam = async () => {
 }
 
 
-// =============================
 // TEST VIDEO UPLOAD MODE
-// =============================
 // Allows testing with pre-recorded video instead of live camera
 const handleTestVideoUpload = async (
   event: React.ChangeEvent<HTMLInputElement>
@@ -885,9 +877,7 @@ const handleTestVideoUpload = async (
 }
 
 
-// =============================
 // VIDEO PLAYBACK CONTROL
-// =============================
 // Toggles play/pause in test mode
 const togglePlayPause = () => {
 
@@ -904,9 +894,7 @@ const togglePlayPause = () => {
 }
 
 
-// =============================
 //  RESET TEST VIDEO STATE
-// =============================
 // Resets playback and all tracking variables
 const resetTestVideo = () => {
 
@@ -939,9 +927,7 @@ const resetTestVideo = () => {
 }
 
 
-// =============================
-// 🏁 COMPUTE & SAVE SESSION SUMMARY
-// =============================
+// COMPUTE & SAVE SESSION SUMMARY
 // Snapshots all session data BEFORE any resets, saves to state for the
 // summary overlay, and fires the onSessionEnd callback.
 const saveAndEndSession = () => {
@@ -971,9 +957,7 @@ const saveAndEndSession = () => {
 }
 
 
-// =============================
 // STOP TEST MODE
-// =============================
 // Completely stops video + tracking loop, saves session first
 const stopTestMode = () => {
   // Save session snapshot before resetting
@@ -1021,9 +1005,7 @@ const stopTestMode = () => {
 }
 
 
-// =============================
-// 🏁 END SESSION (webcam)
-// =============================
+// END SESSION (webcam)
 const endSession = () => {
   // Snapshot and save FIRST
   saveAndEndSession()
@@ -1040,9 +1022,7 @@ const endSession = () => {
   setIsStreaming(false)
 }
 
- // =============================
-// 🤖 MEDIAPIPE INITIALIZATION
-// =============================
+// MEDIAPIPE INITIALIZATION
 // Loads PoseLandmarker model and configures detection settings
 const initPose = async () => {
 
@@ -1079,9 +1059,7 @@ const initPose = async () => {
 }
 
 
-// =============================
-// 🔁 MAIN POSE LOOP (CORE ENGINE)
-// =============================
+// MAIN POSE LOOP (CORE ENGINE)
 // Runs on every frame → detects pose → calculates angles → updates UI → gives feedback
 const startPoseLoop = () => {
 
@@ -1094,18 +1072,16 @@ const startPoseLoop = () => {
   let frameCount = 0
 
 
-  // =============================
-  // 🎬 FRAME RENDER FUNCTION
-  // =============================
+  // FRAME RENDER FUNCTION
   const render = () => {
 
     if (!videoRef.current || !poseRef.current || !canvasRef.current) return
 
     frameCount++
 
-    // =============================
-    // 📐 SYNC CANVAS SIZE WITH VIDEO
-    // =============================
+    // SYNC CANVAS SIZE WITH VIDEO
+    // this tries to get the mediapipe's pose skeleton on the exact place where the perons's limbs are . This was a 
+    // problem coz the person doing exercise is gonna be shown on the side of the screen 
     if (
       canvasRef.current.width !== videoRef.current.videoWidth ||
       canvasRef.current.height !== videoRef.current.videoHeight
@@ -1124,31 +1100,27 @@ const startPoseLoop = () => {
     const result = poseRef.current.detectForVideo(videoRef.current, ts)
 
 
-    // =============================
-    // 🧍 POSE DETECTED
-    // =============================
+    // POSE DETECTED
     if (result.landmarks && result.landmarks.length > 0) {
 
       const landmarks = result.landmarks[0]
 
 
-      // =============================
-      // 📐 ANGLE PROCESSING
-      // =============================
+      // ANGLE PROCESSING
       const rawAngles = calculateAllAngles(landmarks)
       const smoothedAngles = smoothAngles(rawAngles, ts / 1000)
 
 
-      // =============================
-      // 🧪 DEBUG (HEAD YAW TRACKING)
-      // =============================
+
+      // TODO: remove head yaw - out of scope but not demo-ing this anyway
+      // DEBUG (HEAD YAW TRACKING)
       if (
         anglesOfInterest &&
         anglesOfInterest[0] === "head_yaw" &&
         frameCount % 30 === 0
       ) {
         console.log(
-          '🔍 Head yaw:',
+          'Head yaw:',
           smoothedAngles.head_yaw?.toFixed(1),
           'Min:', minAngleSeenRef.current.toFixed(1),
           'Max:', maxAngleSeenRef.current.toFixed(1),
@@ -1160,9 +1132,7 @@ const startPoseLoop = () => {
       setCurrentAngles(smoothedAngles)
 
 
-      // =============================
-      // 🔊 REAL-TIME AUDIO FEEDBACK
-      // =============================
+      // REAL-TIME AUDIO FEEDBACK
       const audio = getAudioFeedback(language)
 
       if (anglesOfInterest && anglesOfInterest.length > 0) {
@@ -1172,7 +1142,7 @@ const startPoseLoop = () => {
 
         if (angle !== undefined) {
 
-          // 🦵 KNEE EXERCISE
+          // KNEE EXERCISE
           if (exerciseType === "knee-extension") {
 
             if (angle < 90) {
@@ -1189,7 +1159,7 @@ const startPoseLoop = () => {
             }
           }
 
-          // 💪 SCAP EXERCISE
+          // SCAP EXERCISE
           if (exerciseType === "scap-wall-slides") {
 
             if (angle < 120) {
@@ -1209,18 +1179,15 @@ const startPoseLoop = () => {
       }
 
 
-      // =============================
-      // 📊 ANGLE HISTORY STORAGE
-      // =============================
+      // ANGLE HISTORY STORAGE
       angleHistoryRef.current.push({
         timestamp: ts / 1000,
         angles: smoothedAngles
       })
 
 
-      // =============================
-      // 🎯 PRIMARY ANGLE (locked for session)
-      // =============================
+      // PRIMARY ANGLE (locked for session) - reason for this is that mediapipe doesn't get confused when tracking one exercise
+      // for example, when tracking knee extensisons, the model sometimes gets confused which leg it is that is extending and often makes judgement errors
       // Lazy-resolve if not set yet (template may have loaded after useEffect)
       if (!resolvedPrimaryRef.current && anglesOfInterest && anglesOfInterest.length > 0) {
         const tmpl = referenceTemplate ?? learnedTemplateRef.current
@@ -2366,9 +2333,7 @@ useEffect(() => {
   )
 }
 
-// =============================
-// 🎯 PRIMARY ANGLE RESOLUTION (single source of truth)
-// =============================
+// PRIMARY ANGLE RESOLUTION (single source of truth)
 // Only considers actual joint angles (not segment angles) so that
 // segment noise can't steal the primary slot. Picks the joint angle
 // with the greatest range across template states. Falls back to
@@ -2411,6 +2376,73 @@ function resolvePrimaryAngle(
   return bestAngle
 }
 
+
+
+
+
+
+
+// template rep counte
+function updateTemplateRepCount(
+  mappedStateId: string | null,
+  timestamp: number,
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  anglesOfInterest: string[]
+) {
+
+  if (!mappedStateId) return
+
+  const MIN_STATE_DURATION = 0.2
+  const last = templateLastStateRef.current
+
+  if (mappedStateId !== last) {
+
+    const dt = timestamp - templateLastChangeTsRef.current
+
+    if (dt < MIN_STATE_DURATION && last) return
+
+    const primary = anglesOfInterest[0]
+
+    const sortable = template.states.filter(
+      s => s.angleRanges[primary]
+    )
+
+    if (sortable.length < 2) {
+      templateLastStateRef.current = mappedStateId
+      templateLastChangeTsRef.current = timestamp
+      return
+    }
+
+    const sorted = [...sortable].sort(
+      (a, b) =>
+        a.angleRanges[primary].mean -
+        b.angleRanges[primary].mean
+    )
+
+    const startId = sorted[0].id
+    const peakId = sorted[sorted.length - 1].id
+
+
+    // peak is detected
+    if (mappedStateId === peakId && last === startId) {
+      templateVisitedPeakRef.current = true
+    }
+
+
+// rep is completed if start --> peak --> start cycle is completed
+    if (
+      mappedStateId === startId &&
+      templateVisitedPeakRef.current &&
+      last === peakId
+    ) {
+
+
+    }
+
+    templateLastStateRef.current = mappedStateId
+    templateLastChangeTsRef.current = timestamp
+  }
+}
 
 
 // =============================
@@ -2591,72 +2623,3 @@ function mapToTemplateState(
   return { id: nearest.id, name: nearest.name }
 }
 
-
-
-const templateLastStateRef: { current: string | null } = { current: null }
-const templateVisitedPeakRef: { current: boolean } = { current: false }
-const templateLastChangeTsRef: { current: number } = { current: 0 }
-
-
-
-// template rep counte
-function updateTemplateRepCount(
-  mappedStateId: string | null,
-  timestamp: number,
-  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
-  anglesOfInterest: string[]
-) {
-
-  if (!mappedStateId) return
-
-  const MIN_STATE_DURATION = 0.2
-  const last = templateLastStateRef.current
-
-  if (mappedStateId !== last) {
-
-    const dt = timestamp - templateLastChangeTsRef.current
-
-    if (dt < MIN_STATE_DURATION && last) return
-
-    const primary = anglesOfInterest[0]
-
-    const sortable = template.states.filter(
-      s => s.angleRanges[primary]
-    )
-
-    if (sortable.length < 2) {
-      templateLastStateRef.current = mappedStateId
-      templateLastChangeTsRef.current = timestamp
-      return
-    }
-
-    const sorted = [...sortable].sort(
-      (a, b) =>
-        a.angleRanges[primary].mean -
-        b.angleRanges[primary].mean
-    )
-
-    const startId = sorted[0].id
-    const peakId = sorted[sorted.length - 1].id
-
-
-    // peak is detected
-    if (mappedStateId === peakId && last === startId) {
-      templateVisitedPeakRef.current = true
-    }
-
-
-// rep is completed if start --> peak --> start cycle is completed
-    if (
-      mappedStateId === startId &&
-      templateVisitedPeakRef.current &&
-      last === peakId
-    ) {
-
-
-    }
-
-    templateLastStateRef.current = mappedStateId
-    templateLastChangeTsRef.current = timestamp
-  }
-}

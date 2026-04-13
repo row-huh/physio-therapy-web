@@ -1,55 +1,67 @@
 /**
  * Tests for lib/ideal-template-manager.ts
  *
- * All Supabase calls are mocked — no real DB is ever hit.
+ * This module manages the "ideal" exercise templates recorded by doctors.
+ * These templates are used as the gold-standard reference when comparing a
+ * patient's session recording — they define what correct form looks like.
  *
- * Covers:
- *   - getIdealTemplate()
- *       - returns null when Supabase returns error
- *       - returns null when data is null
- *       - returns cached value on second call (Supabase not called again)
- *       - returns template on success
- *   - storeIdealTemplate()
- *       - throws on Supabase upsert error
- *       - succeeds and populates cache
- *   - clearIdealTemplateCache()
- *       - forces re-fetch after being called
+ * The module has an in-memory cache so that repeated calls for the same exercise
+ * type do not redundantly hit the database. The cache must be invalidated when
+ * a new template is stored.
+ *
+ * All Supabase calls are mocked — no real database is ever contacted.
+ *
+ * Exported functions:
+ *   getIdealTemplate(exerciseType)   — fetch from cache or DB; returns null on miss
+ *   storeIdealTemplate(type, tmpl)  — upsert to DB; throws on error; populates cache
+ *   clearIdealTemplateCache()       — wipes the in-memory cache, forcing a fresh fetch
  */
 
-// Mock the entire @supabase/supabase-js module so no real client is created.
-// We intercept createClient to inject our mock implementation.
+// Mock the Supabase browser client singleton that the module imports.
+// We replace the `supabase` export with a jest.fn()-controlled stub so we can
+// inspect and control every .from() call without real network traffic.
+jest.mock("@/utils/supabase/client", () => ({
+  supabase: {
+    from: jest.fn(),
+  },
+}))
 
-// The module-level `supabase` singleton in ideal-template-manager is imported
-// from utils/supabase/client — we mock that path instead.
-
-jest.mock("@/utils/supabase/client", () => {
-  return {
-    supabase: {
-      from: jest.fn(),
-    },
-  }
-})
-
-import { getIdealTemplate, storeIdealTemplate, clearIdealTemplateCache } from "@/lib/ideal-template-manager"
+import {
+  getIdealTemplate,
+  storeIdealTemplate,
+  clearIdealTemplateCache,
+} from "@/lib/ideal-template-manager"
 import { supabase } from "@/utils/supabase/client"
 import type { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
 
 // ---------------------------------------------------------------------------
-// Helper: build a mock Supabase query chain
+// Typed mock reference — gives us IntelliSense on the mock's methods
 // ---------------------------------------------------------------------------
 
 const mockSupabase = supabase as jest.Mocked<typeof supabase>
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a minimal Supabase query chain mock.
+ * The returnValue is what `.single()` and `.upsert()` resolve to.
+ */
 function makeMockChain(returnValue: any) {
-  const chain: any = {
+  return {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     single: jest.fn().mockResolvedValue(returnValue),
     upsert: jest.fn().mockResolvedValue(returnValue),
   }
-  return chain
 }
 
+/**
+ * Builds a minimal valid LearnedExerciseTemplate for a given exercise type.
+ * The states array is empty — content-correctness of the template is not
+ * what is being tested here.
+ */
 function makeTemplate(exerciseType = "knee-extension"): LearnedExerciseTemplate {
   return {
     exerciseName: exerciseType,
@@ -69,144 +81,192 @@ function makeTemplate(exerciseType = "knee-extension"): LearnedExerciseTemplate 
 }
 
 // ---------------------------------------------------------------------------
-// Setup
+// Test setup — clear cache and reset all mocks before each test to ensure
+// no state bleeds between tests (the cache would cause false cache-hit results)
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  // Clear the in-memory cache so each test starts with a cold cache
   clearIdealTemplateCache()
+  // Reset mock call counts and return values
   jest.clearAllMocks()
 })
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // getIdealTemplate()
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
-describe("getIdealTemplate", () => {
-  it("returns null when Supabase returns an error", async () => {
-    const chain = makeMockChain({ data: null, error: { message: "not found" } })
-    ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
+describe("getIdealTemplate — retrieve an ideal template for a given exercise type", () => {
 
-    const result = await getIdealTemplate("knee-extension")
-    expect(result).toBeNull()
+  describe("database error and empty responses (should return null)", () => {
+    it("returns null when Supabase returns an error (e.g. table does not exist or network issue), so callers can fall back gracefully rather than receiving a thrown exception", async () => {
+      // Arrange: Supabase signals a DB-level error
+      const chain = makeMockChain({ data: null, error: { message: "relation does not exist" } })
+      ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
+
+      // Act
+      const result = await getIdealTemplate("knee-extension")
+
+      // Assert: the module must swallow the error and return null
+      expect(result).toBeNull()
+      process.stdout.write("[GET] Supabase error → correctly returned null ✓\n")
+    })
+
+    it("returns null when Supabase returns a null data value with no error (row simply does not exist yet for this exercise type)", async () => {
+      // Arrange: successful query that found zero rows
+      const chain = makeMockChain({ data: null, error: null })
+      ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
+
+      // Act
+      const result = await getIdealTemplate("knee-extension")
+
+      // Assert: no row = no template; the caller must handle this null
+      expect(result).toBeNull()
+      process.stdout.write("[GET] Supabase returned null data → correctly returned null ✓\n")
+    })
   })
 
-  it("returns null when Supabase returns null data", async () => {
-    const chain = makeMockChain({ data: null, error: null })
-    ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
+  describe("successful fetch", () => {
+    it("returns the template when Supabase returns a valid row, and the returned template's exerciseType matches the requested type", async () => {
+      // Arrange: DB has a template for this exercise
+      const template = makeTemplate("knee-extension")
+      const chain = makeMockChain({ data: { template }, error: null })
+      ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
 
-    const result = await getIdealTemplate("knee-extension")
-    expect(result).toBeNull()
+      // Act
+      const result = await getIdealTemplate("knee-extension")
+
+      // Assert: must receive a non-null template with the correct exercise type
+      expect(result).not.toBeNull()
+      expect(result!.exerciseType).toBe("knee-extension")
+      process.stdout.write("[GET] Supabase returned valid data → correctly returned template with exerciseType='knee-extension' ✓\n")
+    })
   })
 
-  it("returns the template when Supabase succeeds", async () => {
-    const template = makeTemplate()
-    const chain = makeMockChain({ data: { template }, error: null })
-    ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
+  describe("in-memory caching — the second call must not re-query Supabase", () => {
+    it("serves the cached template on the second call for the same exercise type without making a second Supabase query, avoiding redundant DB round-trips", async () => {
+      // Arrange: DB returns a template on first call
+      const template = makeTemplate("knee-extension")
+      const chain = makeMockChain({ data: { template }, error: null })
+      ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
 
-    const result = await getIdealTemplate("knee-extension")
-    expect(result).not.toBeNull()
-    expect(result!.exerciseType).toBe("knee-extension")
-  })
+      // Act: call twice for the same exercise type
+      await getIdealTemplate("knee-extension")
+      const secondResult = await getIdealTemplate("knee-extension")
 
-  it("returns cached value on second call without re-querying Supabase", async () => {
-    const template = makeTemplate()
-    const chain = makeMockChain({ data: { template }, error: null })
-    ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
+      // Assert: from() should have been called exactly once — second call is a cache hit
+      expect(mockSupabase.from).toHaveBeenCalledTimes(1)
+      expect(secondResult!.exerciseType).toBe("knee-extension")
+      process.stdout.write("[CACHE] Two calls for same type → Supabase.from() called exactly 1 time (cache hit on second call) ✓\n")
+    })
 
-    await getIdealTemplate("knee-extension")
-    const secondResult = await getIdealTemplate("knee-extension")
+    it("caches templates for different exercise types independently, querying Supabase separately for each type", async () => {
+      // Arrange: two different exercise types with different templates
+      const kneeTemplate = makeTemplate("knee-extension")
+      const scapTemplate = makeTemplate("scap-wall-slides")
 
-    // from() should only have been called once (cache hit on second call)
-    expect(mockSupabase.from).toHaveBeenCalledTimes(1)
-    expect(secondResult!.exerciseType).toBe("knee-extension")
-  })
+      // Configure the mock to return different templates for each call
+      ;(mockSupabase.from as jest.Mock)
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          single: jest.fn().mockResolvedValue({ data: { template: kneeTemplate }, error: null }),
+        })
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          single: jest.fn().mockResolvedValue({ data: { template: scapTemplate }, error: null }),
+        })
 
-  it("fetches different exercise types independently", async () => {
-    const kneeTemplate = makeTemplate("knee-extension")
-    const scapTemplate = makeTemplate("scap-wall-slides")
+      // Act: fetch both exercise types
+      const r1 = await getIdealTemplate("knee-extension")
+      const r2 = await getIdealTemplate("scap-wall-slides")
 
-    // Each call to from() returns a fresh chain with a dedicated single() resolution.
-    ;(mockSupabase.from as jest.Mock)
-      .mockReturnValueOnce({
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({ data: { template: kneeTemplate }, error: null }),
-      })
-      .mockReturnValueOnce({
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({ data: { template: scapTemplate }, error: null }),
-      })
-
-    const r1 = await getIdealTemplate("knee-extension")
-    const r2 = await getIdealTemplate("scap-wall-slides")
-
-    expect(r1!.exerciseType).toBe("knee-extension")
-    expect(r2!.exerciseType).toBe("scap-wall-slides")
+      // Assert: each result must match its requested exercise type
+      expect(r1!.exerciseType).toBe("knee-extension")
+      expect(r2!.exerciseType).toBe("scap-wall-slides")
+      process.stdout.write("[CACHE] Two different exercise types → each correctly returned its own template ✓\n")
+    })
   })
 })
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // storeIdealTemplate()
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
-describe("storeIdealTemplate", () => {
-  it("throws when Supabase upsert returns an error", async () => {
+describe("storeIdealTemplate — persist a doctor's ideal template to the database", () => {
+
+  it("throws an error containing the DB message when Supabase upsert returns an error, because the caller must know the template was not saved", async () => {
+    // Arrange: upsert fails with a constraint violation
     const chain = {
       upsert: jest.fn().mockResolvedValue({ error: { message: "db constraint violation" } }),
     }
     ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
 
-    await expect(storeIdealTemplate("knee-extension", makeTemplate())).rejects.toThrow(
-      "Failed to store ideal template: db constraint violation"
-    )
+    // Act + Assert: must throw with the DB's error message included
+    await expect(storeIdealTemplate("knee-extension", makeTemplate()))
+      .rejects.toThrow("Failed to store ideal template: db constraint violation")
+
+    process.stdout.write("[STORE] Upsert error → correctly threw 'Failed to store ideal template: db constraint violation' ✓\n")
   })
 
-  it("succeeds silently when Supabase upsert has no error", async () => {
+  it("resolves with undefined (returns nothing) when the upsert succeeds, because a successful write has no data to return", async () => {
+    // Arrange: upsert succeeds
     const chain = {
       upsert: jest.fn().mockResolvedValue({ error: null }),
     }
     ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
 
-    await expect(storeIdealTemplate("knee-extension", makeTemplate())).resolves.toBeUndefined()
+    // Act + Assert: must resolve without value (void function)
+    await expect(storeIdealTemplate("knee-extension", makeTemplate()))
+      .resolves.toBeUndefined()
+
+    process.stdout.write("[STORE] Successful upsert → correctly resolved with undefined ✓\n")
   })
 
-  it("updates the in-memory cache after successful store", async () => {
+  it("populates the in-memory cache after a successful store, so that an immediately-following getIdealTemplate() call returns from cache without hitting Supabase again", async () => {
+    // Arrange: upsert succeeds
     const template = makeTemplate("knee-extension")
     const storeChain = {
       upsert: jest.fn().mockResolvedValue({ error: null }),
     }
     ;(mockSupabase.from as jest.Mock).mockReturnValue(storeChain)
 
+    // Act: store the template, then immediately retrieve it
     await storeIdealTemplate("knee-extension", template)
-
-    // Now getIdealTemplate should return from cache without hitting Supabase
     const cached = await getIdealTemplate("knee-extension")
-    // from() was only called once (for the store), not a second time for the get
+
+    // Assert: from() was called exactly once (for the store), not a second time for the get
     expect(mockSupabase.from).toHaveBeenCalledTimes(1)
     expect(cached!.exerciseType).toBe("knee-extension")
+    process.stdout.write("[STORE] After successful store → subsequent getIdealTemplate served from cache (Supabase.from called only 1 time) ✓\n")
   })
 })
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // clearIdealTemplateCache()
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
-describe("clearIdealTemplateCache", () => {
-  it("forces a fresh Supabase query after clearing cache", async () => {
-    const template = makeTemplate()
+describe("clearIdealTemplateCache — invalidate the in-memory cache to force fresh DB reads", () => {
+  it("causes the next getIdealTemplate() call to query Supabase again instead of serving the cached value, so that a freshly stored template is visible immediately after cache clear", async () => {
+    // Arrange: a template is in the cache after the first fetch
+    const template = makeTemplate("knee-extension")
     const chain = makeMockChain({ data: { template }, error: null })
     ;(mockSupabase.from as jest.Mock).mockReturnValue(chain)
 
-    // First call — populates cache
+    // First call — fetches from DB and populates cache
     await getIdealTemplate("knee-extension")
     expect(mockSupabase.from).toHaveBeenCalledTimes(1)
 
-    // Clear cache
+    // Act: clear the cache
     clearIdealTemplateCache()
+    process.stdout.write("[CACHE CLEAR] clearIdealTemplateCache() called ✓\n")
 
-    // Second call — should hit Supabase again
+    // Second call — must go back to Supabase (cache is empty)
     await getIdealTemplate("knee-extension")
+
+    // Assert: from() was called a second time (cache miss after clear)
     expect(mockSupabase.from).toHaveBeenCalledTimes(2)
+    process.stdout.write("[CACHE CLEAR] After cache clear, getIdealTemplate() queried Supabase again (from() called 2 times total) ✓\n")
   })
 })
