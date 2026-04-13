@@ -1,15 +1,14 @@
 /**
- * Tests for lib/exercise-config.ts
+ * Whitebox tests — lib/exercise-config.ts
  *
- * This module is the central registry of supported exercises.
- * Each exercise config defines which joint angles are clinically relevant
- * for that movement — these lists drive the comparison and feedback systems.
+ * The exercise registry drives which joints are compared and scored.
+ * Every function is tested for its happy path, all defined exercises,
+ * and every fallback / edge-case branch.
  *
  * Exported symbols under test:
- *
- *   EXERCISE_CONFIGS   — the registry array of all supported exercises
- *   getExerciseConfig(id)    — lookup by exercise id string
- *   filterAnglesByExercise(angles, exerciseId) — keep only relevant angles
+ *   EXERCISE_CONFIGS          — registry array
+ *   getExerciseConfig(id)     — lookup by id
+ *   filterAnglesByExercise(angles, exerciseId)  — intersection filter
  */
 
 import {
@@ -18,219 +17,251 @@ import {
   filterAnglesByExercise,
 } from "@/lib/exercise-config"
 
+// ---------------------------------------------------------------------------
+// Output helpers
+// ---------------------------------------------------------------------------
+
+const HEAD = (s: string) =>
+  process.stdout.write(`\n  ┌─ ${s} ${"─".repeat(Math.max(0, 50 - s.length))}┐\n`)
+
+const out = (tag: string, desc: string, result: string, note = "") => {
+  const t = `[${tag}]`.padEnd(10)
+  const d = desc.padEnd(38)
+  const n = note ? `  ← ${note}` : ""
+  process.stdout.write(`  ${t}  ${d}  →  ${result}${n}\n`)
+}
+
+beforeAll(() => {
+  process.stdout.write("\n")
+  process.stdout.write("  ╔══════════════════════════════════════════════════════╗\n")
+  process.stdout.write("  ║  lib/exercise-config.ts  whitebox test suite         ║\n")
+  process.stdout.write("  ╚══════════════════════════════════════════════════════╝\n")
+})
+
 // ===========================================================================
-// EXERCISE_CONFIGS — the exercise registry array
+// EXERCISE_CONFIGS array
 // ===========================================================================
 
-describe("EXERCISE_CONFIGS — the registry of all supported physiotherapy exercises", () => {
+describe("EXERCISE_CONFIGS — the exercise registry array", () => {
 
-  describe("basic shape and contents", () => {
-    it("exports a non-empty array, confirming that at least one exercise has been registered", () => {
-      // An empty configs array would make the entire comparison system non-functional
-      expect(Array.isArray(EXERCISE_CONFIGS)).toBe(true)
-      expect(EXERCISE_CONFIGS.length).toBeGreaterThan(0)
-      process.stdout.write(`[CONFIG] EXERCISE_CONFIGS has ${EXERCISE_CONFIGS.length} registered exercise(s)\n`)
-    })
+  beforeAll(() => { HEAD("EXERCISE_CONFIGS") })
 
-    it("contains a config for 'knee-extension' — the primary lower-body exercise", () => {
-      const cfg = EXERCISE_CONFIGS.find((c) => c.id === "knee-extension")
+  it("is a non-empty array (a zero-length registry would disable the entire system)", () => {
+    expect(Array.isArray(EXERCISE_CONFIGS)).toBe(true)
+    expect(EXERCISE_CONFIGS.length).toBeGreaterThan(0)
+    out("ARRAY", "EXERCISE_CONFIGS", `${EXERCISE_CONFIGS.length} registered exercise(s)`)
+  })
+
+  it("every config has id, name, description as non-empty strings", () => {
+    for (const cfg of EXERCISE_CONFIGS) {
+      expect(typeof cfg.id).toBe("string")
+      expect(cfg.id.length).toBeGreaterThan(0)
+      expect(typeof cfg.name).toBe("string")
+      expect(cfg.name.length).toBeGreaterThan(0)
+      expect(typeof cfg.description).toBe("string")
+    }
+    const ids = EXERCISE_CONFIGS.map(c => c.id).join(", ")
+    out("FIELDS", "all configs: id, name, description", `string ✓`, `ids: [${ids}]`)
+  })
+
+  it("every config has anglesOfInterest as a non-empty array", () => {
+    for (const cfg of EXERCISE_CONFIGS) {
+      expect(Array.isArray(cfg.anglesOfInterest)).toBe(true)
+      expect(cfg.anglesOfInterest.length).toBeGreaterThan(0)
+    }
+    out("AOI", "all configs: anglesOfInterest", "non-empty array ✓")
+  })
+
+  it("every angleConfig entry has type ('joint' or 'segment'), name, description", () => {
+    for (const cfg of EXERCISE_CONFIGS) {
+      for (const ac of cfg.angleConfigs) {
+        expect(["joint", "segment"]).toContain(ac.type)
+        expect(typeof ac.name).toBe("string")
+        expect(typeof ac.description).toBe("string")
+      }
+    }
+    out("ACONF", "all angleConfigs: type + name + description", "valid ✓")
+  })
+
+  it("no two configs share the same id (ids are unique)", () => {
+    const ids = EXERCISE_CONFIGS.map(c => c.id)
+    const unique = new Set(ids)
+    expect(unique.size).toBe(ids.length)
+    out("UNIQUE", "all config ids", `${unique.size} unique (no duplicates) ✓`)
+  })
+
+  describe("known registered exercises", () => {
+    it("knee-extension is registered with the correct display name", () => {
+      const cfg = EXERCISE_CONFIGS.find(c => c.id === "knee-extension")
       expect(cfg).toBeDefined()
-      // The display name must match the registered label exactly
       expect(cfg!.name).toBe("Knee Extension")
-      process.stdout.write(`[CONFIG] 'knee-extension' found with name='${cfg!.name}'\n`)
+      out("KNEE", "id='knee-extension'", `name='${cfg!.name}'`)
     })
 
-    it("contains a config for 'scap-wall-slides' — the primary upper-body/shoulder exercise", () => {
-      const cfg = EXERCISE_CONFIGS.find((c) => c.id === "scap-wall-slides")
+    it("scap-wall-slides is registered with the correct display name", () => {
+      const cfg = EXERCISE_CONFIGS.find(c => c.id === "scap-wall-slides")
       expect(cfg).toBeDefined()
       expect(cfg!.name).toBe("Scap Wall Slides")
-      process.stdout.write(`[CONFIG] 'scap-wall-slides' found with name='${cfg!.name}'\n`)
-    })
-  })
-
-  describe("required fields on every config", () => {
-    it("every exercise config has id, name, and description as non-empty strings, so the UI can render the exercise picker without undefined values", () => {
-      for (const cfg of EXERCISE_CONFIGS) {
-        // All three must be present strings — undefined or empty would break the UI
-        expect(typeof cfg.id).toBe("string")
-        expect(typeof cfg.name).toBe("string")
-        expect(typeof cfg.description).toBe("string")
-      }
-      process.stdout.write(`[CONFIG] All ${EXERCISE_CONFIGS.length} configs have valid id, name, and description strings\n`)
+      out("SCAP", "id='scap-wall-slides'", `name='${cfg!.name}'`)
     })
 
-    it("every exercise config has anglesOfInterest as a non-null array, because comparison and feedback both depend on this list to know which joints to analyse", () => {
-      for (const cfg of EXERCISE_CONFIGS) {
-        expect(Array.isArray(cfg.anglesOfInterest)).toBe(true)
-      }
-      process.stdout.write("[CONFIG] All configs have anglesOfInterest as an array\n")
+    it("knee-extension anglesOfInterest includes left_knee, right_knee, left_leg_segment", () => {
+      const aoi = getExerciseConfig("knee-extension")!.anglesOfInterest
+      expect(aoi).toContain("left_knee")
+      expect(aoi).toContain("right_knee")
+      expect(aoi).toContain("left_leg_segment")
+      out("KNEE-AOI", "knee-extension anglesOfInterest", `[${aoi.join(", ")}]`)
     })
 
-    it("every exercise config has angleConfigs as a non-null array, providing joint definitions used by the pose detection layer", () => {
-      for (const cfg of EXERCISE_CONFIGS) {
-        expect(Array.isArray(cfg.angleConfigs)).toBe(true)
-      }
-      process.stdout.write("[CONFIG] All configs have angleConfigs as an array\n")
-    })
-  })
-
-  describe("angleConfig entry structure", () => {
-    it("every angleConfig entry has type ('joint' or 'segment'), name, and description, ensuring the pose-analyzer receives well-formed angle definitions", () => {
-      for (const cfg of EXERCISE_CONFIGS) {
-        for (const ac of cfg.angleConfigs) {
-          // type must be one of two valid discriminators
-          expect(["joint", "segment"]).toContain(ac.type)
-          expect(typeof ac.name).toBe("string")
-          expect(typeof ac.description).toBe("string")
-        }
-      }
-      process.stdout.write("[CONFIG] All angleConfig entries have valid type, name, and description\n")
-    })
-  })
-
-  describe("exercise-specific anglesOfInterest content", () => {
-    it("knee-extension config includes left_knee, right_knee, and left_leg_segment as angles of interest, which are the joints that define a complete knee extension motion", () => {
-      const cfg = getExerciseConfig("knee-extension")!
-
-      expect(cfg.anglesOfInterest).toContain("left_knee")
-      expect(cfg.anglesOfInterest).toContain("right_knee")
-      expect(cfg.anglesOfInterest).toContain("left_leg_segment")
-
-      process.stdout.write(`[CONFIG] knee-extension anglesOfInterest: [${cfg.anglesOfInterest.join(", ")}]\n`)
-    })
-
-    it("scap-wall-slides config includes left_shoulder and right_elbow, which are the primary joints involved in the scapular retraction motion", () => {
-      const cfg = getExerciseConfig("scap-wall-slides")!
-
-      expect(cfg.anglesOfInterest).toContain("left_shoulder")
-      expect(cfg.anglesOfInterest).toContain("right_elbow")
-
-      process.stdout.write(`[CONFIG] scap-wall-slides anglesOfInterest: [${cfg.anglesOfInterest.join(", ")}]\n`)
+    it("scap-wall-slides anglesOfInterest includes left_shoulder, right_elbow", () => {
+      const aoi = getExerciseConfig("scap-wall-slides")!.anglesOfInterest
+      expect(aoi).toContain("left_shoulder")
+      expect(aoi).toContain("right_elbow")
+      out("SCAP-AOI", "scap-wall-slides anglesOfInterest", `[${aoi.join(", ")}]`)
     })
   })
 })
 
 // ===========================================================================
-// getExerciseConfig()
+// getExerciseConfig(id)
 // ===========================================================================
 
-describe("getExerciseConfig — look up an exercise configuration by its unique id string", () => {
+describe("getExerciseConfig() — lookup by id string", () => {
 
-  describe("known exercise ids", () => {
-    it("returns the correct config object (with matching id) for 'knee-extension'", () => {
-      const cfg = getExerciseConfig("knee-extension")
+  beforeAll(() => { HEAD("getExerciseConfig()") })
 
-      // Must find something
-      expect(cfg).not.toBeUndefined()
-      // Must be the right one
-      expect(cfg!.id).toBe("knee-extension")
-      process.stdout.write(`[LOOKUP] getExerciseConfig('knee-extension') → found config with name='${cfg!.name}'\n`)
-    })
+  it("returns the correct config for 'knee-extension'", () => {
+    const cfg = getExerciseConfig("knee-extension")
+    expect(cfg).toBeDefined()
+    expect(cfg!.id).toBe("knee-extension")
+    out("HIT", "getExerciseConfig('knee-extension')", `found: name='${cfg!.name}'`)
   })
 
-  describe("unknown or invalid ids", () => {
-    it("returns undefined for a completely unknown exercise id, so callers can branch on the absence of a config rather than receiving a corrupt object", () => {
-      const cfg = getExerciseConfig("totally-unknown-exercise-that-does-not-exist")
+  it("returns the correct config for 'scap-wall-slides'", () => {
+    const cfg = getExerciseConfig("scap-wall-slides")
+    expect(cfg).toBeDefined()
+    expect(cfg!.id).toBe("scap-wall-slides")
+    out("HIT", "getExerciseConfig('scap-wall-slides')", `found: name='${cfg!.name}'`)
+  })
 
-      expect(cfg).toBeUndefined()
-      process.stdout.write("[LOOKUP] getExerciseConfig('totally-unknown-exercise') → correctly returned undefined\n")
-    })
+  it("returns undefined for a completely unknown id", () => {
+    const r = getExerciseConfig("ghost-exercise-xyz")
+    expect(r).toBeUndefined()
+    out("MISS", "getExerciseConfig('ghost-exercise-xyz')", "undefined", "unknown id → undefined")
+  })
 
-    it("returns undefined for an empty string id, because an empty string is not a valid exercise identifier", () => {
-      expect(getExerciseConfig("")).toBeUndefined()
-      process.stdout.write("[LOOKUP] getExerciseConfig('') → correctly returned undefined\n")
-    })
+  it("returns undefined for an empty string", () => {
+    const r = getExerciseConfig("")
+    expect(r).toBeUndefined()
+    out("MISS", "getExerciseConfig('')", "undefined", "empty string → undefined")
+  })
 
-    it("is case-sensitive — 'Knee-Extension' (mixed case) returns undefined even though 'knee-extension' is registered, because exercise ids must be used exactly as declared", () => {
-      // This guards against callers passing UI display strings as ids by mistake
-      expect(getExerciseConfig("Knee-Extension")).toBeUndefined()
-      process.stdout.write("[LOOKUP] getExerciseConfig('Knee-Extension') → correctly returned undefined (case-sensitive)\n")
-    })
+  it("is case-sensitive: 'Knee-Extension' (title case) returns undefined", () => {
+    const r = getExerciseConfig("Knee-Extension")
+    expect(r).toBeUndefined()
+    out("CASE", "getExerciseConfig('Knee-Extension')", "undefined", "ids are lowercase-exact")
+  })
+
+  it("is case-sensitive: 'KNEE-EXTENSION' (all caps) returns undefined", () => {
+    const r = getExerciseConfig("KNEE-EXTENSION")
+    expect(r).toBeUndefined()
+    out("CASE", "getExerciseConfig('KNEE-EXTENSION')", "undefined")
+  })
+
+  it("returned config object is the exact same reference as in EXERCISE_CONFIGS", () => {
+    const cfg = getExerciseConfig("knee-extension")
+    const found = EXERCISE_CONFIGS.find(c => c.id === "knee-extension")
+    expect(cfg).toBe(found)
+    out("REF", "getExerciseConfig vs EXERCISE_CONFIGS.find", "same object reference ✓")
   })
 })
 
 // ===========================================================================
-// filterAnglesByExercise()
+// filterAnglesByExercise(angles, exerciseId)
 // ===========================================================================
 
-describe("filterAnglesByExercise — return only the angles relevant to a specific exercise", () => {
+describe("filterAnglesByExercise() — keep only angles relevant to the given exercise", () => {
+
+  beforeAll(() => { HEAD("filterAnglesByExercise()") })
 
   /**
-   * A broad set of angle names that spans both knee and shoulder exercises,
-   * plus one completely irrelevant angle, used across multiple tests.
+   * Broad set spanning both exercise families + an irrelevant name.
    */
-  const ALL_ANGLES = [
-    "left_knee",
-    "right_knee",
-    "left_shoulder",
-    "right_shoulder",
+  const ALL = [
+    "left_knee", "right_knee",
+    "left_shoulder", "right_shoulder",
+    "left_elbow", "right_elbow",
     "left_leg_segment",
-    "totally_irrelevant_angle",
+    "totally_irrelevant",
   ]
 
-  describe("filtering for knee-extension", () => {
-    it("keeps left_knee, right_knee, and left_leg_segment but removes left_shoulder, right_shoulder, and totally_irrelevant_angle, so the comparison engine only evaluates clinically meaningful joints", () => {
-      const result = filterAnglesByExercise(ALL_ANGLES, "knee-extension")
-
-      // Expected inclusions — these joints define the knee extension motion
-      expect(result).toContain("left_knee")
-      expect(result).toContain("right_knee")
-      expect(result).toContain("left_leg_segment")
-
-      // Expected exclusions — upper body and unknown angles must be filtered out
-      expect(result).not.toContain("left_shoulder")
-      expect(result).not.toContain("right_shoulder")
-      expect(result).not.toContain("totally_irrelevant_angle")
-
-      process.stdout.write(`[FILTER] knee-extension from ${ALL_ANGLES.length} angles → kept: [${result.join(", ")}]\n`)
+  describe("knee-extension filtering", () => {
+    it("keeps knee + leg-segment angles, drops shoulder + irrelevant", () => {
+      const r = filterAnglesByExercise(ALL, "knee-extension")
+      expect(r).toContain("left_knee")
+      expect(r).toContain("right_knee")
+      expect(r).toContain("left_leg_segment")
+      expect(r).not.toContain("left_shoulder")
+      expect(r).not.toContain("right_shoulder")
+      expect(r).not.toContain("totally_irrelevant")
+      out("KNEE", `${ALL.length} angles in`, `[${r.join(", ")}] (${r.length} kept)`)
     })
   })
 
-  describe("filtering for scap-wall-slides", () => {
-    it("keeps left_shoulder and right_shoulder but removes left_knee and right_knee, because the scapular sliding motion is an upper-body exercise with no clinical knee involvement", () => {
-      const result = filterAnglesByExercise(ALL_ANGLES, "scap-wall-slides")
-
-      expect(result).toContain("left_shoulder")
-      expect(result).toContain("right_shoulder")
-      expect(result).not.toContain("left_knee")
-      expect(result).not.toContain("right_knee")
-
-      process.stdout.write(`[FILTER] scap-wall-slides from ${ALL_ANGLES.length} angles → kept: [${result.join(", ")}]\n`)
+  describe("scap-wall-slides filtering", () => {
+    it("keeps shoulder + elbow angles, drops knee + irrelevant", () => {
+      const r = filterAnglesByExercise(ALL, "scap-wall-slides")
+      expect(r).toContain("left_shoulder")
+      expect(r).toContain("right_shoulder")
+      expect(r).not.toContain("left_knee")
+      expect(r).not.toContain("right_knee")
+      expect(r).not.toContain("totally_irrelevant")
+      out("SCAP", `${ALL.length} angles in`, `[${r.join(", ")}] (${r.length} kept)`)
     })
   })
 
-  describe("unknown exercise type — fallback behaviour", () => {
-    it("returns all input angles unchanged when the exercise id is not found in EXERCISE_CONFIGS, because an unknown exercise type should not silently discard data", () => {
-      const result = filterAnglesByExercise(ALL_ANGLES, "ghost-exercise-not-in-registry")
-
-      // Fallback: return the full input list unmodified
-      expect(result).toEqual(ALL_ANGLES)
-      process.stdout.write(`[FILTER] Unknown exercise type → correctly fell back to returning all ${ALL_ANGLES.length} angles\n`)
+  describe("unknown exercise type — fallback: return all angles", () => {
+    it("returns the full input array when the exercise id is not registered", () => {
+      const r = filterAnglesByExercise(ALL, "ghost-exercise")
+      expect(r).toEqual(ALL)
+      out("FALLBACK", "unknown id 'ghost-exercise'", `all ${r.length} angles returned`, "no data loss on unknown type")
     })
   })
 
   describe("edge cases", () => {
-    it("returns an empty array when the input angles array is empty, regardless of exercise type", () => {
-      const result = filterAnglesByExercise([], "knee-extension")
-
-      expect(result).toEqual([])
-      process.stdout.write("[FILTER] Empty input array → correctly returned empty array\n")
+    it("empty input → empty output, regardless of exercise type", () => {
+      const r = filterAnglesByExercise([], "knee-extension")
+      expect(r).toEqual([])
+      out("EMPTY", "filterAnglesByExercise([], 'knee-extension')", "[]")
     })
 
-    it("returns only the matched angle when input is a single-element array containing a relevant angle", () => {
-      // left_knee is in knee-extension's anglesOfInterest → should be kept
-      const result = filterAnglesByExercise(["left_knee"], "knee-extension")
-
-      expect(result).toEqual(["left_knee"])
-      process.stdout.write("[FILTER] Single relevant input angle → correctly returned ['left_knee']\n")
+    it("single relevant angle → single-element output", () => {
+      const r = filterAnglesByExercise(["left_knee"], "knee-extension")
+      expect(r).toEqual(["left_knee"])
+      out("SINGLE", "['left_knee'] for knee-extension", `[${r.join(", ")}]`)
     })
 
-    it("returns an empty array when none of the input angles appear in the exercise's anglesOfInterest", () => {
-      // left_pinky_finger is obviously not in the knee-extension config
-      const result = filterAnglesByExercise(["left_pinky_finger"], "knee-extension")
+    it("single irrelevant angle → empty output", () => {
+      const r = filterAnglesByExercise(["totally_irrelevant"], "knee-extension")
+      expect(r).toEqual([])
+      out("IRREL", "['totally_irrelevant'] for knee-extension", "[]")
+    })
 
-      expect(result).toEqual([])
-      process.stdout.write("[FILTER] Single irrelevant input angle → correctly returned []\n")
+    it("output is a subset of the input — no new angle names introduced", () => {
+      const r = filterAnglesByExercise(ALL, "knee-extension")
+      for (const angle of r) {
+        expect(ALL).toContain(angle)
+      }
+      out("SUBSET", "all output angles exist in input", "✓ no phantom angles")
+    })
+
+    it("output order preserves input order (filter uses Array.filter which retains input sequence)", () => {
+      // Implementation uses allAngles.filter(…) → output order = input order
+      const input = ["totally_irrelevant", "left_leg_segment", "right_knee", "left_knee"]
+      const r = filterAnglesByExercise(input, "knee-extension")
+      // Only the three relevant items survive, in the order they appeared in `input`
+      expect(r).toEqual(["left_leg_segment", "right_knee", "left_knee"])
+      out("ORDER", "reversed input, knee-extension", `[${r.join(", ")}]`, "preserves input order")
     })
   })
 })

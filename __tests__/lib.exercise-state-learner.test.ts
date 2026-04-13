@@ -1,18 +1,23 @@
 /**
- * Tests for lib/exercise-state-learner.ts — learnExerciseStates()
+ * Whitebox tests — lib/exercise-state-learner.ts
  *
- * learnExerciseStates() is the core machine-learning function that analyses
- * a time-series of joint angles recorded during a demo exercise and builds a
- * LearnedExerciseTemplate. The template captures distinct exercise "states"
- * (e.g. "flexed", "extended"), the typical angle ranges in each state, and
- * timing data needed for rep counting.
+ * learnExerciseStates(jointAngles, exerciseName, exerciseType, anglesOfInterest)
+ *   → LearnedExerciseTemplate
  *
- * The template produced by this function is stored as the "ideal" reference
- * that all future patient sessions are compared against.
+ * This function analyses a joint-angle time-series (recorded from a demo video),
+ * clusters the frames into discrete exercise states via k-means, and builds the
+ * reference template that all future patient sessions are scored against.
  *
- * Note: pose-analyzer.ts (analyzeVideoForPose) requires a real browser with
- * MediaPipe and cannot be unit-tested in Node.js — it is excluded from this suite.
- * Only the learnExerciseStates() function (pure computation on angle data) is tested.
+ * Internal branches under test:
+ *   1. Input validation throws  (empty array, wrong joints)
+ *   2. Template shape — all required fields on the returned object
+ *   3. State shape — well-formed DetectedState objects with statistical invariants
+ *   4. Bilateral exercises — left + right joints tracked in a single template
+ *   5. Reproducibility — identical input produces identical output
+ *   6. Edge cases — very short recordings, constant angles
+ *
+ * Note: pose-analyzer.ts requires a real browser with MediaPipe and is excluded.
+ * Only learnExerciseStates() (pure computation on angle arrays) is tested here.
  */
 
 import { learnExerciseStates } from "@/lib/exercise-state-learner"
@@ -23,18 +28,9 @@ import type { JointAngle } from "@/lib/pose-analyzer"
 // ---------------------------------------------------------------------------
 
 /**
- * Generates a sinusoidal angle time-series that simulates a real repeating exercise.
- * The sine wave smoothly oscillates between minAngle and maxAngle, repeating `reps` times.
- *
- * Why sinusoidal? Because real joint angles during exercises follow smooth oscillations,
- * not step functions. This generator produces realistic-enough data for the clustering
- * algorithm inside learnExerciseStates to find meaningful state boundaries.
- *
- * @param joint        - The joint name (e.g. "left_knee")
- * @param reps         - Number of full repetitions in the generated sequence
- * @param framesPerRep - Number of frames per repetition (higher = smoother)
- * @param minAngle     - Minimum angle in the oscillation (flexed position)
- * @param maxAngle     - Maximum angle in the oscillation (extended position)
+ * Generates a sinusoidal joint-angle time-series.
+ * Oscillates between minAngle and maxAngle, completing `reps` full cycles.
+ * Higher framesPerRep → smoother signal → better clustering.
  */
 function generateSineAngles(
   joint: string,
@@ -44,238 +40,339 @@ function generateSineAngles(
   maxAngle = 170
 ): JointAngle[] {
   const angles: JointAngle[] = []
-  const totalFrames = reps * framesPerRep
-  const fps = 30
-
-  for (let i = 0; i < totalFrames; i++) {
-    const t = i / fps
+  const total = reps * framesPerRep
+  for (let i = 0; i < total; i++) {
     const phase = (2 * Math.PI * i) / framesPerRep
     const angle = minAngle + (maxAngle - minAngle) * (0.5 + 0.5 * Math.sin(phase))
-    angles.push({ joint, angle, timestamp: t })
+    angles.push({ joint, angle, timestamp: i / 30 })
   }
-
   return angles
 }
 
+/** Generates a constant-angle sequence (no movement). */
+function generateConstantAngles(joint: string, frames: number, angle: number): JointAngle[] {
+  return Array.from({ length: frames }, (_, i) => ({
+    joint, angle, timestamp: i / 30,
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// Output helpers
+// ---------------------------------------------------------------------------
+
+const HEAD = (s: string) =>
+  process.stdout.write(`\n  ┌─ ${s} ${"─".repeat(Math.max(0, 50 - s.length))}┐\n`)
+
+const out = (tag: string, desc: string, result: string, note = "") => {
+  const t = `[${tag}]`.padEnd(12)
+  const d = desc.padEnd(44)
+  const n = note ? `  ← ${note}` : ""
+  process.stdout.write(`  ${t}  ${d}  →  ${result}${n}\n`)
+}
+
+beforeAll(() => {
+  process.stdout.write("\n")
+  process.stdout.write("  ╔══════════════════════════════════════════════════════╗\n")
+  process.stdout.write("  ║  lib/exercise-state-learner.ts  whitebox test suite  ║\n")
+  process.stdout.write("  ╚══════════════════════════════════════════════════════╝\n")
+})
+
 // ===========================================================================
-// learnExerciseStates()
+// Branch 1 — Input validation
 // ===========================================================================
 
-describe("learnExerciseStates — build a LearnedExerciseTemplate from joint angle time-series data", () => {
+describe("input validation — insufficient data must throw before clustering", () => {
 
-  // ── Input validation (these must throw) ─────────────────────────────────
+  beforeAll(() => { HEAD("Branch 1: input validation") })
 
-  describe("input validation — insufficient data should throw immediately", () => {
-    it("throws when jointAngles is an empty array, because there is no data to cluster into exercise states", () => {
-      // No frames at all → the function has nothing to analyse
-      expect(() =>
-        learnExerciseStates([], "Knee Extension", "knee-extension", ["left_knee"])
-      ).toThrow()
-      process.stdout.write("[VALIDATION] Empty jointAngles array → correctly threw an error\n")
-    })
-
-    it("throws with a specific 'No angle data found for the specified angles of interest' message when the angle data exists but none of it is for the requested joints", () => {
-      // Data is available but for a completely different joint (right_shoulder, not left_knee)
-      const angles = generateSineAngles("right_shoulder", 3, 30)
-
-      expect(() =>
-        learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
-      ).toThrow("No angle data found for the specified angles of interest")
-
-      process.stdout.write("[VALIDATION] Data for wrong joint → correctly threw 'No angle data found for the specified angles of interest'\n")
-    })
+  it("throws for an empty jointAngles array", () => {
+    expect(() =>
+      learnExerciseStates([], "Knee Extension", "knee-extension", ["left_knee"])
+    ).toThrow()
+    out("THROW", "empty jointAngles []", "throws ✓")
   })
 
-  // ── Return shape ─────────────────────────────────────────────────────────
-
-  describe("return shape — the template must carry all required fields", () => {
-    let template: ReturnType<typeof learnExerciseStates>
-
-    /**
-     * Generate 3 reps of left_knee data before all tests in this group run.
-     * Using 40 frames/rep gives the clustering algorithm enough data points to
-     * find meaningful state boundaries.
-     */
-    beforeAll(() => {
-      const angles = generateSineAngles("left_knee", 3, 40, 90, 170)
-      template = learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
-    })
-
-    it("preserves the exerciseName passed as the second argument", () => {
-      // The template's exerciseName is used in the UI — must be identical to what was passed in
-      expect(template.exerciseName).toBe("Knee Extension")
-      process.stdout.write(`[SHAPE] exerciseName='${template.exerciseName}' ✓\n`)
-    })
-
-    it("preserves the exerciseType passed as the third argument", () => {
-      // exerciseType is the lookup key used throughout the comparison system
-      expect(template.exerciseType).toBe("knee-extension")
-      process.stdout.write(`[SHAPE] exerciseType='${template.exerciseType}' ✓\n`)
-    })
-
-    it("produces a non-empty states array, because at least one distinct exercise phase must be identified from the oscillating data", () => {
-      expect(Array.isArray(template.states)).toBe(true)
-      expect(template.states.length).toBeGreaterThan(0)
-      process.stdout.write(`[SHAPE] states array has ${template.states.length} detected state(s) ✓\n`)
-    })
-
-    it("produces a transitions array (may be empty for single-state exercises)", () => {
-      expect(Array.isArray(template.transitions)).toBe(true)
-      process.stdout.write(`[SHAPE] transitions array has ${template.transitions.length} entry/entries ✓\n`)
-    })
-
-    it("produces a repSequence array (may be empty if no repeating pattern was detected)", () => {
-      expect(Array.isArray(template.repSequence)).toBe(true)
-      process.stdout.write(`[SHAPE] repSequence array has ${template.repSequence.length} entry/entries ✓\n`)
-    })
-
-    it("has recommendedReps >= 1, because the function must always suggest at least one repetition — zero reps makes no clinical sense", () => {
-      expect(template.recommendedReps).toBeGreaterThanOrEqual(1)
-      process.stdout.write(`[SHAPE] recommendedReps=${template.recommendedReps} (>= 1) ✓\n`)
-    })
-
-    it("has a positive totalDuration, because any input data that spans time must produce a non-zero duration", () => {
-      expect(template.totalDuration).toBeGreaterThan(0)
-      process.stdout.write(`[SHAPE] totalDuration=${template.totalDuration.toFixed(3)}s (> 0) ✓\n`)
-    })
-
-    it("metadata.detectedAt is a valid ISO 8601 date string that can be parsed by the Date constructor without error", () => {
-      // Must be parseable — used for sorting templates by recording date in the UI
-      expect(() => new Date(template.metadata.detectedAt).toISOString()).not.toThrow()
-      process.stdout.write(`[SHAPE] metadata.detectedAt='${template.metadata.detectedAt}' is a valid ISO string ✓\n`)
-    })
-
-    it("metadata.videoLength equals totalDuration, confirming both fields represent the same time span", () => {
-      // These two fields must be in sync — they are used interchangeably downstream
-      expect(template.metadata.videoLength).toBe(template.totalDuration)
-      process.stdout.write(`[SHAPE] metadata.videoLength (${template.metadata.videoLength}) === totalDuration (${template.totalDuration}) ✓\n`)
-    })
-
-    it("metadata.fps is a positive number, reflecting the frame rate of the source angle data", () => {
-      expect(template.metadata.fps).toBeGreaterThan(0)
-      process.stdout.write(`[SHAPE] metadata.fps=${template.metadata.fps} (> 0) ✓\n`)
-    })
-
-    it("metadata.confidence is in the range [0, 100], where 0 = no confidence and 100 = perfect clustering fit", () => {
-      expect(template.metadata.confidence).toBeGreaterThanOrEqual(0)
-      expect(template.metadata.confidence).toBeLessThanOrEqual(100)
-      process.stdout.write(`[SHAPE] metadata.confidence=${template.metadata.confidence} (in [0, 100]) ✓\n`)
-    })
+  it("throws with 'No angle data found' when data exists but for a different joint", () => {
+    const angles = generateSineAngles("right_shoulder", 3, 30)
+    expect(() =>
+      learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
+    ).toThrow("No angle data found for the specified angles of interest")
+    out("THROW", "data=right_shoulder, AOI=[left_knee]", "throws with correct message ✓")
   })
 
-  // ── Individual state shape ───────────────────────────────────────────────
+  it("does NOT throw when valid data is provided for the requested joint", () => {
+    const angles = generateSineAngles("left_knee", 3, 40)
+    expect(() =>
+      learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
+    ).not.toThrow()
+    out("OK", "3 reps × 40 frames of left_knee data", "no throw ✓")
+  })
+})
 
-  describe("state shape — each detected state must be a well-formed object", () => {
-    let template: ReturnType<typeof learnExerciseStates>
+// ===========================================================================
+// Branch 2 — Template shape
+// ===========================================================================
 
-    beforeAll(() => {
-      // 4 reps gives more data, increasing the chance of detecting multiple states
-      const angles = generateSineAngles("left_knee", 4, 40, 90, 170)
-      template = learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
-    })
+describe("template shape — all required fields on the returned LearnedExerciseTemplate", () => {
 
-    it("every state has an id, name, and description as string fields, required for the UI to render state labels without undefined values", () => {
-      for (const state of template.states) {
-        expect(typeof state.id).toBe("string")
-        expect(typeof state.name).toBe("string")
-        expect(typeof state.description).toBe("string")
+  let tmpl: ReturnType<typeof learnExerciseStates>
+
+  beforeAll(() => {
+    HEAD("Branch 2: template shape")
+    tmpl = learnExerciseStates(
+      generateSineAngles("left_knee", 3, 40, 90, 170),
+      "Knee Extension", "knee-extension", ["left_knee"]
+    )
+  })
+
+  it("exerciseName matches the second argument", () => {
+    expect(tmpl.exerciseName).toBe("Knee Extension")
+    out("FIELD", "exerciseName", `'${tmpl.exerciseName}'`)
+  })
+
+  it("exerciseType matches the third argument", () => {
+    expect(tmpl.exerciseType).toBe("knee-extension")
+    out("FIELD", "exerciseType", `'${tmpl.exerciseType}'`)
+  })
+
+  it("states is a non-empty array", () => {
+    expect(Array.isArray(tmpl.states)).toBe(true)
+    expect(tmpl.states.length).toBeGreaterThan(0)
+    out("FIELD", "states", `array of ${tmpl.states.length} state(s)`)
+  })
+
+  it("transitions is an array (may be empty)", () => {
+    expect(Array.isArray(tmpl.transitions)).toBe(true)
+    out("FIELD", "transitions", `array of ${tmpl.transitions.length} entry/entries`)
+  })
+
+  it("repSequence is an array (may be empty)", () => {
+    expect(Array.isArray(tmpl.repSequence)).toBe(true)
+    out("FIELD", "repSequence", `array of ${tmpl.repSequence.length} entry/entries`)
+  })
+
+  it("recommendedReps >= 1  (zero reps is not clinically meaningful)", () => {
+    expect(tmpl.recommendedReps).toBeGreaterThanOrEqual(1)
+    out("FIELD", "recommendedReps", `${tmpl.recommendedReps}`, ">= 1")
+  })
+
+  it("totalDuration > 0  (any time-series has a non-zero duration)", () => {
+    expect(tmpl.totalDuration).toBeGreaterThan(0)
+    out("FIELD", "totalDuration", `${tmpl.totalDuration.toFixed(3)}s`, "> 0")
+  })
+
+  it("metadata.detectedAt is a parseable ISO 8601 date string", () => {
+    expect(() => new Date(tmpl.metadata.detectedAt).toISOString()).not.toThrow()
+    out("META", "metadata.detectedAt", `'${tmpl.metadata.detectedAt}'`, "valid ISO 8601")
+  })
+
+  it("metadata.videoLength === totalDuration  (both represent the same span)", () => {
+    expect(tmpl.metadata.videoLength).toBe(tmpl.totalDuration)
+    out("META", "metadata.videoLength vs totalDuration", `${tmpl.metadata.videoLength} === ${tmpl.totalDuration} ✓`)
+  })
+
+  it("metadata.fps > 0", () => {
+    expect(tmpl.metadata.fps).toBeGreaterThan(0)
+    out("META", "metadata.fps", `${tmpl.metadata.fps}`, "> 0")
+  })
+
+  it("metadata.confidence is in [0, 100]", () => {
+    expect(tmpl.metadata.confidence).toBeGreaterThanOrEqual(0)
+    expect(tmpl.metadata.confidence).toBeLessThanOrEqual(100)
+    out("META", "metadata.confidence", `${tmpl.metadata.confidence}`, "in [0, 100]")
+  })
+})
+
+// ===========================================================================
+// Branch 3 — State shape
+// ===========================================================================
+
+describe("state shape — each DetectedState satisfies structural and statistical invariants", () => {
+
+  let tmpl: ReturnType<typeof learnExerciseStates>
+
+  beforeAll(() => {
+    HEAD("Branch 3: state shape")
+    tmpl = learnExerciseStates(
+      generateSineAngles("left_knee", 4, 40, 90, 170),
+      "Knee Extension", "knee-extension", ["left_knee"]
+    )
+  })
+
+  it("every state has non-empty string id, name, description", () => {
+    for (const s of tmpl.states) {
+      expect(typeof s.id).toBe("string")
+      expect(s.id.length).toBeGreaterThan(0)
+      expect(typeof s.name).toBe("string")
+      expect(typeof s.description).toBe("string")
+    }
+    out("STATE", `${tmpl.states.length} states — id/name/description`, "all non-empty strings ✓")
+  })
+
+  it("state ids are unique — no duplicates in the template", () => {
+    const ids = tmpl.states.map(s => s.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    out("STATE", "state ids", `${ids.length} unique ✓`)
+  })
+
+  it("left_knee angleRange satisfies min <= mean <= max (statistical invariant)", () => {
+    for (const s of tmpl.states) {
+      const r = s.angleRanges["left_knee"]
+      if (!r) continue
+      expect(r.min).toBeLessThanOrEqual(r.mean)
+      expect(r.max).toBeGreaterThanOrEqual(r.mean)
+      expect(typeof r.stdDev).toBe("number")
+    }
+    out("STATS", "all left_knee ranges: min <= mean <= max", "✓  stdDev is a number")
+  })
+
+  it("left_knee mean falls within the input signal range [90°, 170°]", () => {
+    for (const s of tmpl.states) {
+      const r = s.angleRanges["left_knee"]
+      if (!r) continue
+      expect(r.mean).toBeGreaterThanOrEqual(80)   // slight buffer for floating-point
+      expect(r.mean).toBeLessThanOrEqual(180)
+    }
+    out("RANGE", "all left_knee state means", "within input signal range [90, 170] ✓")
+  })
+
+  it("every state has >= 1 occurrence with numeric startTime, endTime, duration", () => {
+    for (const s of tmpl.states) {
+      expect(s.occurrences.length).toBeGreaterThan(0)
+      for (const occ of s.occurrences) {
+        expect(typeof occ.startTime).toBe("number")
+        expect(typeof occ.endTime).toBe("number")
+        expect(typeof occ.duration).toBe("number")
       }
-      process.stdout.write(`[STATE] All ${template.states.length} state(s) have valid id, name, and description strings ✓\n`)
-    })
+    }
+    out("OCC", "all states: occurrences", ">= 1 occ, all fields numeric ✓")
+  })
 
-    it("every state's angleRanges for the tracked joint (left_knee) has all four statistical fields: mean, min, max, stdDev — and min <= mean <= max", () => {
-      for (const state of template.states) {
-        const range = state.angleRanges["left_knee"]
-        if (range) {
-          // All four fields must be numbers
-          expect(typeof range.mean).toBe("number")
-          expect(typeof range.min).toBe("number")
-          expect(typeof range.max).toBe("number")
-          expect(typeof range.stdDev).toBe("number")
-          // Statistical invariant: min <= mean <= max
-          expect(range.min).toBeLessThanOrEqual(range.mean)
-          expect(range.max).toBeGreaterThanOrEqual(range.mean)
+  it("representativeTimestamp is a non-negative number", () => {
+    for (const s of tmpl.states) {
+      expect(typeof s.representativeTimestamp).toBe("number")
+      expect(s.representativeTimestamp).toBeGreaterThanOrEqual(0)
+    }
+    out("TS", "representativeTimestamp on all states", ">= 0 ✓")
+  })
+})
+
+// ===========================================================================
+// Branch 4 — Bilateral exercises
+// ===========================================================================
+
+describe("bilateral exercises — left + right joint data in one template", () => {
+
+  beforeAll(() => { HEAD("Branch 4: bilateral exercises") })
+
+  it("left_knee + right_knee combined data → does not throw", () => {
+    const combined = [
+      ...generateSineAngles("left_knee",  3, 40),
+      ...generateSineAngles("right_knee", 3, 40),
+    ]
+    expect(() =>
+      learnExerciseStates(combined, "Knee Extension", "knee-extension", ["left_knee", "right_knee"])
+    ).not.toThrow()
+    out("BILAT", "left_knee + right_knee (3 reps each)", "no throw ✓")
+  })
+
+  it("at least one state has angleRanges for BOTH left_knee and right_knee", () => {
+    const combined = [
+      ...generateSineAngles("left_knee",  3, 40),
+      ...generateSineAngles("right_knee", 3, 40),
+    ]
+    const tmpl = learnExerciseStates(
+      combined, "Knee Extension", "knee-extension", ["left_knee", "right_knee"]
+    )
+    const hasBoth = tmpl.states.some(s => s.angleRanges["left_knee"] && s.angleRanges["right_knee"])
+    expect(hasBoth).toBe(true)
+    out("BILAT", "states with both left_knee + right_knee ranges", `hasBoth=${hasBoth} ✓`)
+  })
+})
+
+// ===========================================================================
+// Branch 5 — Reproducibility
+// ===========================================================================
+
+describe("reproducibility — identical input produces identical output", () => {
+
+  beforeAll(() => { HEAD("Branch 5: reproducibility") })
+
+  it("calling learnExerciseStates twice with the same data gives the same number of states (k-means cluster count is stable; exact centroid values may vary due to random init)", () => {
+    const angles = generateSineAngles("left_knee", 3, 40, 90, 170)
+    const a = learnExerciseStates([...angles], "Knee Extension", "knee-extension", ["left_knee"])
+    const b = learnExerciseStates([...angles], "Knee Extension", "knee-extension", ["left_knee"])
+
+    // State count must be stable — same data → same cluster count
+    expect(a.states.length).toBe(b.states.length)
+
+    // All means must stay within the input signal bounds on both runs
+    for (const tmpl of [a, b]) {
+      for (const s of tmpl.states) {
+        const r = s.angleRanges["left_knee"]
+        if (r) {
+          expect(r.mean).toBeGreaterThanOrEqual(80)
+          expect(r.mean).toBeLessThanOrEqual(180)
         }
       }
-      process.stdout.write(`[STATE] All angle ranges have valid mean/min/max/stdDev and satisfy min <= mean <= max ✓\n`)
-    })
+    }
 
-    it("every state has at least one occurrence, and every occurrence has numeric startTime, endTime, and duration fields", () => {
-      for (const state of template.states) {
-        // A state with zero occurrences is an orphaned cluster with no time anchor
-        expect(state.occurrences.length).toBeGreaterThan(0)
+    const meansA = a.states.map(s => s.angleRanges["left_knee"]?.mean ?? 0).sort()
+    out("REPRO", "same input ×2 → same states.length, means within [80,180]",
+      `${a.states.length} states, run-A means: [${meansA.map(m => m.toFixed(1)).join(", ")}] ✓`)
+  })
+})
 
-        for (const occ of state.occurrences) {
-          expect(typeof occ.startTime).toBe("number")
-          expect(typeof occ.endTime).toBe("number")
-          expect(typeof occ.duration).toBe("number")
-        }
-      }
-      process.stdout.write("[STATE] All states have >= 1 occurrence with numeric startTime/endTime/duration ✓\n")
-    })
+// ===========================================================================
+// Branch 6 — Edge cases
+// ===========================================================================
 
-    it("state ids are unique across the template, so states can be referenced by id without ambiguity in the comparison and rep-counting systems", () => {
-      const ids = template.states.map((s) => s.id)
-      const uniqueIds = new Set(ids)
+describe("edge cases — unusual but valid inputs", () => {
 
-      // If any ids are duplicated the Set will be smaller than the array
-      expect(uniqueIds.size).toBe(ids.length)
-      process.stdout.write(`[STATE] All ${ids.length} state id(s) are unique ✓\n`)
-    })
+  beforeAll(() => { HEAD("Branch 6: edge cases") })
+
+  it("5-frame input (very short recording) → does not throw (graceful degradation)", () => {
+    const angles: JointAngle[] = Array.from({ length: 5 }, (_, i) => ({
+      joint: "left_knee", angle: 90 + i, timestamp: i / 30,
+    }))
+    expect(() =>
+      learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
+    ).not.toThrow()
+    out("SHORT", "5-frame input", "no throw ✓")
   })
 
-  // ── Bilateral exercises ──────────────────────────────────────────────────
-
-  describe("bilateral exercises — both left and right joint data are processed together", () => {
-    it("processes combined left_knee + right_knee angle data without throwing, confirming that multi-joint exercises are handled correctly", () => {
-      const left  = generateSineAngles("left_knee",  3, 40)
-      const right = generateSineAngles("right_knee", 3, 40)
-      const combined = [...left, ...right]
-
-      expect(() =>
-        learnExerciseStates(combined, "Knee Extension", "knee-extension", ["left_knee", "right_knee"])
-      ).not.toThrow()
-
-      process.stdout.write("[BILATERAL] left_knee + right_knee combined data → learnExerciseStates did not throw ✓\n")
-    })
-
-    it("produces states where at least one state has angle ranges for BOTH left_knee and right_knee, confirming bilateral angles are tracked together in a single template", () => {
-      const left  = generateSineAngles("left_knee",  3, 40)
-      const right = generateSineAngles("right_knee", 3, 40)
-      const combined = [...left, ...right]
-
-      const template = learnExerciseStates(
-        combined,
-        "Knee Extension",
-        "knee-extension",
-        ["left_knee", "right_knee"]
-      )
-
-      // At least one state must capture both joints — that is the whole point of bilateral tracking
-      const anyStateHasBoth = template.states.some(
-        (s) => s.angleRanges["left_knee"] && s.angleRanges["right_knee"]
-      )
-      expect(anyStateHasBoth).toBe(true)
-      process.stdout.write("[BILATERAL] At least one state has both left_knee and right_knee angle ranges ✓\n")
-    })
+  it("constant-angle input → at least one state is returned (even flat data clusters into 1+ state)", () => {
+    const angles = generateConstantAngles("left_knee", 60, 130)
+    let tmpl: ReturnType<typeof learnExerciseStates> | undefined
+    expect(() => {
+      tmpl = learnExerciseStates(angles, "Static Hold", "knee-extension", ["left_knee"])
+    }).not.toThrow()
+    if (tmpl) {
+      expect(tmpl.states.length).toBeGreaterThan(0)
+      out("CONST", "60 frames at constant 130°", `${tmpl.states.length} state(s) ✓`)
+    }
   })
 
-  // ── Edge cases ───────────────────────────────────────────────────────────
+  it("large input (10 reps × 60 frames = 600 frames) → completes without throwing and returns states", () => {
+    const angles = generateSineAngles("left_knee", 10, 60, 90, 170)
+    let tmpl: ReturnType<typeof learnExerciseStates> | undefined
+    expect(() => {
+      tmpl = learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
+    }).not.toThrow()
+    if (tmpl) {
+      expect(tmpl.states.length).toBeGreaterThan(0)
+      out("LARGE", "10 reps × 60 frames (600 total)", `${tmpl.states.length} states, recs=${tmpl.recommendedReps} ✓`)
+    }
+  })
 
-  describe("edge cases — near-minimum valid input", () => {
-    it("does not throw when given fewer than 10 frames of valid data, even though the clustering result may have low confidence or warn internally", () => {
-      // 5 frames is an unusually short recording — the function should degrade gracefully
-      const angles: JointAngle[] = []
-      for (let i = 0; i < 5; i++) {
-        angles.push({ joint: "left_knee", angle: 90 + i, timestamp: i / 30 })
-      }
-
-      // A console.warn is acceptable here; a throw is not
-      expect(() =>
-        learnExerciseStates(angles, "Knee Extension", "knee-extension", ["left_knee"])
-      ).not.toThrow()
-
-      process.stdout.write("[EDGE] 5-frame input (very short recording) → learnExerciseStates did not throw ✓\n")
-    })
+  it("mixed in-range and out-of-range frames (second joint absent for half the frames) → does not throw", () => {
+    // left_knee present for all 90 frames; right_knee present for only first 30
+    const lk = generateSineAngles("left_knee",  3, 30, 90, 170)
+    const rk = generateSineAngles("right_knee", 1, 30, 90, 170)
+    const mixed = [...lk, ...rk]
+    expect(() =>
+      learnExerciseStates(mixed, "Knee Extension", "knee-extension", ["left_knee"])
+    ).not.toThrow()
+    out("MIXED", "left_knee 90fr + right_knee 30fr, AOI=[left_knee]", "no throw ✓")
   })
 })

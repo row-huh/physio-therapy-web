@@ -1,19 +1,9 @@
 /**
- * Tests for lib/utils.ts
+ * Whitebox tests — lib/utils.ts
  *
- * This module exports small utility functions used throughout the UI layer.
- * Despite being "just utilities", they are critical to correct display:
- *   - cn()               — wrong class merging → broken layouts
- *   - formatAngleName()  — garbled joint names → confusing feedback
- *   - getSimilarityColor/Bg() — wrong colour → misleading score indication
- *   - getDeviationBg()   — wrong background → misleading angle deviation display
- *
- * Exported functions:
- *   cn(...inputs)                — clsx + tailwind-merge class combiner
- *   formatAngleName(snakeName)   — snake_case joint name → "Title Case" display string
- *   getSimilarityColor(score)    — score [0-100] → Tailwind text-color class
- *   getSimilarityBg(score)       — score [0-100] → Tailwind bg-color class
- *   getDeviationBg(degrees)      — deviation [0-180°] → Tailwind bg-color class
+ * Five small utility functions used throughout the UI layer.
+ * Every threshold boundary is tested on both sides so regressions
+ * in the ternary chains are caught immediately.
  */
 
 import {
@@ -24,56 +14,68 @@ import {
   getDeviationBg,
 } from "@/lib/utils"
 
+// ---------------------------------------------------------------------------
+// Shared output helpers
+// ---------------------------------------------------------------------------
+
+const SEP  = "  " + "─".repeat(54)
+const HEAD = (fn: string) => process.stdout.write(`\n  ┌─ ${fn} ${"─".repeat(Math.max(0, 50 - fn.length))}┐\n`)
+const out  = (tag: string, input: string, arrow: string, note = "") => {
+  const t = `[${tag}]`.padEnd(10)
+  const i = input.padEnd(36)
+  const n = note ? `  ← ${note}` : ""
+  process.stdout.write(`  ${t}  ${i}  →  ${arrow}${n}\n`)
+}
+
+beforeAll(() => {
+  process.stdout.write("\n")
+  process.stdout.write("  ╔══════════════════════════════════════════════════════╗\n")
+  process.stdout.write("  ║  lib/utils.ts  whitebox test suite                  ║\n")
+  process.stdout.write("  ╚══════════════════════════════════════════════════════╝\n")
+})
+
 // ===========================================================================
-// cn()
+// cn()  —  clsx + tailwind-merge
 // ===========================================================================
 
-describe("cn — clsx + tailwind-merge class combiner for conditional class construction", () => {
+describe("cn() — clsx + tailwind-merge class combiner", () => {
 
-  describe("basic class merging", () => {
-    it("concatenates two plain class strings with a space between them", () => {
-      const result = cn("foo", "bar")
+  beforeAll(() => { HEAD("cn()") })
 
-      expect(result).toBe("foo bar")
-      process.stdout.write(`[CN] cn('foo', 'bar') → '${result}' ✓\n`)
-    })
+  it("joins two plain strings with a space", () => {
+    const r = cn("foo", "bar")
+    expect(r).toBe("foo bar")
+    out("JOIN", "'foo', 'bar'", `'${r}'`)
   })
 
-  describe("Tailwind conflict resolution (tailwind-merge behaviour)", () => {
-    it("resolves conflicting Tailwind classes by keeping only the last one — bg-red-500 is overridden by bg-blue-500 because tailwind-merge drops earlier conflicting utilities", () => {
-      // Without tailwind-merge, both classes would be in the output, causing specificity confusion
-      const result = cn("bg-red-500", "bg-blue-500")
-
-      expect(result).toBe("bg-blue-500")
-      process.stdout.write(`[CN] cn('bg-red-500', 'bg-blue-500') → '${result}' (bg-red correctly dropped) ✓\n`)
-    })
+  it("resolves a Tailwind conflict: later bg wins, earlier is dropped", () => {
+    const r = cn("bg-red-500", "bg-blue-500")
+    expect(r).toBe("bg-blue-500")
+    out("TW-MERGE", "'bg-red-500', 'bg-blue-500'", `'${r}'`, "bg-red-500 dropped")
   })
 
-  describe("conditional class handling (clsx behaviour)", () => {
-    it("excludes falsy values (false, undefined, null) from the output while keeping adjacent truthy class strings", () => {
-      const result = cn("base", false && "never", undefined, null as any, "end")
-
-      // Only 'base' and 'end' should remain — the falsy values are skipped
-      expect(result).toBe("base end")
-      process.stdout.write(`[CN] cn('base', false, undefined, null, 'end') → '${result}' ✓\n`)
-    })
-
-    it("returns an empty string when ALL inputs are falsy, because there are no classes to render", () => {
-      const result = cn(false as any, undefined, null as any)
-
-      expect(result).toBe("")
-      process.stdout.write(`[CN] cn(false, undefined, null) → '${result}' (empty string) ✓\n`)
-    })
+  it("drops false, undefined, null — keeps adjacent truthy strings", () => {
+    const r = cn("base", false && "never", undefined, null as any, "end")
+    expect(r).toBe("base end")
+    out("FALSY", "'base', false, undefined, null, 'end'", `'${r}'`, "falsy values absent")
   })
 
-  describe("clsx extended forms — arrays and objects", () => {
-    it("accepts arrays and conditional objects and merges them correctly: ['a','b'] + { c:true, d:false } → 'a b c'", () => {
-      const result = cn(["a", "b"], { c: true, d: false })
+  it("returns empty string when ALL inputs are falsy", () => {
+    const r = cn(false as any, undefined, null as any)
+    expect(r).toBe("")
+    out("ALL-FALSY", "false, undefined, null", `'${r}'`, "no classes → empty")
+  })
 
-      // 'd' must be excluded because its value is false
-      expect(result).toBe("a b c")
-      process.stdout.write(`[CN] cn(['a','b'], {c:true,d:false}) → '${result}' ✓\n`)
-    })
+  it("accepts clsx extended forms: arrays and conditional objects", () => {
+    const r = cn(["a", "b"], { c: true, d: false })
+    expect(r).toBe("a b c")
+    out("OBJECT", "['a','b'], {c:true, d:false}", `'${r}'`, "'d' excluded (false)")
+  })
+
+  it("resolves multiple Tailwind conflicts in a single call", () => {
+    const r = cn("p-2", "p-4", "text-red-500", "text-blue-500")
+    expect(r).toBe("p-4 text-blue-500")
+    out("MULTI-TW", "'p-2', 'p-4', 'text-red', 'text-blue'", `'${r}'`, "last of each group wins")
   })
 })
 
@@ -81,228 +83,205 @@ describe("cn — clsx + tailwind-merge class combiner for conditional class cons
 // formatAngleName()
 // ===========================================================================
 
-describe("formatAngleName — convert snake_case joint angle names to Title Case for display", () => {
+describe("formatAngleName() — snake_case joint name → Title Case display string", () => {
 
-  it("converts a single-word name to Title Case (first letter uppercased, rest preserved)", () => {
-    expect(formatAngleName("knee")).toBe("Knee")
-    process.stdout.write("[FORMAT] formatAngleName('knee') → 'Knee' ✓\n")
+  beforeAll(() => { HEAD("formatAngleName()") })
+
+  const cases: [string, string][] = [
+    ["knee",               "Knee"],
+    ["left_knee",          "Left Knee"],
+    ["right_shoulder",     "Right Shoulder"],
+    ["left_thigh_segment", "Left Thigh Segment"],
+    ["",                   ""],
+  ]
+
+  it.each(cases)("'%s'  →  '%s'", (input, expected) => {
+    const r = formatAngleName(input)
+    expect(r).toBe(expected)
+    out("FMT", `'${input}'`, `'${r}'`)
   })
 
-  it("converts a two-word snake_case name to Title Case, capitalising each word independently", () => {
-    expect(formatAngleName("left_knee")).toBe("Left Knee")
-    process.stdout.write("[FORMAT] formatAngleName('left_knee') → 'Left Knee' ✓\n")
+  it("each word starts with an uppercase letter (not lowercase)", () => {
+    const words = formatAngleName("left_thigh_segment").split(" ")
+    for (const w of words) {
+      expect(w[0]).toMatch(/[A-Z]/)
+    }
+    out("CASE", "each word in 'left_thigh_segment'", "uppercase first char ✓")
   })
 
-  it("converts a three-word snake_case name to Title Case, confirming there is no word-count limit", () => {
-    expect(formatAngleName("left_thigh_segment")).toBe("Left Thigh Segment")
-    process.stdout.write("[FORMAT] formatAngleName('left_thigh_segment') → 'Left Thigh Segment' ✓\n")
-  })
-
-  it("the output for 'left_knee' starts with 'Left', confirming the capitalisation applies to the first character of each segment", () => {
-    const result = formatAngleName("left_knee")
-
-    expect(result.startsWith("Left")).toBe(true)
-    process.stdout.write(`[FORMAT] formatAngleName('left_knee').startsWith('Left') → true ✓\n`)
-  })
-
-  it("returns an empty string when the input is an empty string, so callers do not receive undefined or null", () => {
-    expect(formatAngleName("")).toBe("")
-    process.stdout.write("[FORMAT] formatAngleName('') → '' (empty string) ✓\n")
-  })
-
-  it("handles an input with no underscores (single word) and correctly capitalises it", () => {
-    expect(formatAngleName("shoulder")).toBe("Shoulder")
-    process.stdout.write("[FORMAT] formatAngleName('shoulder') → 'Shoulder' ✓\n")
+  it("underscores are replaced with spaces — no underscore appears in output", () => {
+    const r = formatAngleName("left_knee")
+    expect(r).not.toContain("_")
+    out("NO-US", "'left_knee'", `'${r}'`, "no underscore in result")
   })
 })
 
 // ===========================================================================
-// getSimilarityColor()
+// getSimilarityColor()   thresholds: ≥80 green | ≥60 yellow | <60 red
 // ===========================================================================
 
-describe("getSimilarityColor — map a similarity score (0-100) to a Tailwind text-color class", () => {
-  /**
-   * Colour tiers:
-   *   score >= 80 → text-green-500 (excellent)
-   *   score in [60, 79] → text-yellow-500 (adequate)
-   *   score < 60 → text-red-500 (poor)
-   */
+describe("getSimilarityColor() — score [0-100] → Tailwind text-color class", () => {
 
-  describe("green tier (score >= 80)", () => {
-    it("returns 'text-green-500' for score=80 (the exact lower boundary of the green tier)", () => {
-      expect(getSimilarityColor(80)).toBe("text-green-500")
-      process.stdout.write("[COLOR] getSimilarityColor(80) → 'text-green-500' ✓\n")
-    })
-
-    it("returns 'text-green-500' for score=100 (the maximum possible score)", () => {
-      expect(getSimilarityColor(100)).toBe("text-green-500")
-      process.stdout.write("[COLOR] getSimilarityColor(100) → 'text-green-500' ✓\n")
-    })
-
-    it("returns 'text-green-500' for score=95 (a mid-range excellent score)", () => {
-      expect(getSimilarityColor(95)).toBe("text-green-500")
-      process.stdout.write("[COLOR] getSimilarityColor(95) → 'text-green-500' ✓\n")
-    })
+  beforeAll(() => {
+    HEAD("getSimilarityColor()")
+    process.stdout.write(`${SEP}\n`)
+    process.stdout.write("  thresholds:  score ≥ 80  →  green  |  ≥ 60  →  yellow  |  < 60  →  red\n")
+    process.stdout.write(`${SEP}\n`)
   })
 
-  describe("yellow tier (score in [60, 79])", () => {
-    it("returns 'text-yellow-500' for score=60 (the exact lower boundary of the yellow tier)", () => {
-      expect(getSimilarityColor(60)).toBe("text-yellow-500")
-      process.stdout.write("[COLOR] getSimilarityColor(60) → 'text-yellow-500' ✓\n")
-    })
-
-    it("returns 'text-yellow-500' for score=79 (the exact upper boundary of the yellow tier, just below green)", () => {
-      expect(getSimilarityColor(79)).toBe("text-yellow-500")
-      process.stdout.write("[COLOR] getSimilarityColor(79) → 'text-yellow-500' ✓\n")
-    })
-
-    it("returns 'text-yellow-500' for score=70 (the midpoint of the yellow tier)", () => {
-      expect(getSimilarityColor(70)).toBe("text-yellow-500")
-      process.stdout.write("[COLOR] getSimilarityColor(70) → 'text-yellow-500' ✓\n")
-    })
+  it("score=100 → text-green-500", () => {
+    const r = getSimilarityColor(100)
+    expect(r).toBe("text-green-500")
+    out("GREEN", "score=100", r)
   })
 
-  describe("red tier (score < 60)", () => {
-    it("returns 'text-red-500' for score=59 (the exact upper boundary of the red tier, just below yellow)", () => {
-      expect(getSimilarityColor(59)).toBe("text-red-500")
-      process.stdout.write("[COLOR] getSimilarityColor(59) → 'text-red-500' ✓\n")
-    })
-
-    it("returns 'text-red-500' for score=0 (the minimum possible score)", () => {
-      expect(getSimilarityColor(0)).toBe("text-red-500")
-      process.stdout.write("[COLOR] getSimilarityColor(0) → 'text-red-500' ✓\n")
-    })
-
-    it("returns 'text-red-500' for score=30 (a mid-range poor score)", () => {
-      expect(getSimilarityColor(30)).toBe("text-red-500")
-      process.stdout.write("[COLOR] getSimilarityColor(30) → 'text-red-500' ✓\n")
-    })
+  it("score=80 → text-green-500  (green lower boundary, inclusive)", () => {
+    const r = getSimilarityColor(80)
+    expect(r).toBe("text-green-500")
+    out("GREEN", "score=80", r, "lower bound — inclusive")
   })
 
-  describe("boundary precision tests — confirm exact threshold values", () => {
-    it("score=80 maps to green (NOT yellow), confirming the boundary is inclusive at 80", () => {
-      expect(getSimilarityColor(80)).toBe("text-green-500")
-      process.stdout.write("[COLOR] Boundary: score=80 → 'text-green-500' (NOT 'text-yellow-500') ✓\n")
-    })
+  it("score=79 → text-yellow-500  (one below green boundary)", () => {
+    const r = getSimilarityColor(79)
+    expect(r).toBe("text-yellow-500")
+    out("YELLOW", "score=79", r, "just below green")
+  })
 
-    it("score=60 maps to yellow (NOT red), confirming the boundary is inclusive at 60", () => {
-      expect(getSimilarityColor(60)).toBe("text-yellow-500")
-      process.stdout.write("[COLOR] Boundary: score=60 → 'text-yellow-500' (NOT 'text-red-500') ✓\n")
-    })
+  it("score=70 → text-yellow-500", () => {
+    const r = getSimilarityColor(70)
+    expect(r).toBe("text-yellow-500")
+    out("YELLOW", "score=70", r)
+  })
+
+  it("score=60 → text-yellow-500  (yellow lower boundary, inclusive)", () => {
+    const r = getSimilarityColor(60)
+    expect(r).toBe("text-yellow-500")
+    out("YELLOW", "score=60", r, "lower bound — inclusive")
+  })
+
+  it("score=59 → text-red-500  (one below yellow boundary)", () => {
+    const r = getSimilarityColor(59)
+    expect(r).toBe("text-red-500")
+    out("RED", "score=59", r, "just below yellow")
+  })
+
+  it("score=0 → text-red-500", () => {
+    const r = getSimilarityColor(0)
+    expect(r).toBe("text-red-500")
+    out("RED", "score=0", r)
   })
 })
 
 // ===========================================================================
-// getSimilarityBg()
+// getSimilarityBg()  — mirrors getSimilarityColor() with bg- prefix
 // ===========================================================================
 
-describe("getSimilarityBg — map a similarity score (0-100) to a Tailwind background-color class", () => {
-  /**
-   * Mirrors the same tier structure as getSimilarityColor() but returns bg- classes.
-   * These are used for score badges and progress bars in the comparison UI.
-   */
+describe("getSimilarityBg() — score [0-100] → Tailwind bg-color class (mirrors text logic)", () => {
 
-  it("returns 'bg-green-500' for score=80 (green tier lower boundary)", () => {
-    expect(getSimilarityBg(80)).toBe("bg-green-500")
-    process.stdout.write("[BG] getSimilarityBg(80) → 'bg-green-500' ✓\n")
+  beforeAll(() => { HEAD("getSimilarityBg()") })
+
+  const cases: [number, string][] = [
+    [100, "bg-green-500"],
+    [80,  "bg-green-500"],
+    [79,  "bg-yellow-500"],
+    [60,  "bg-yellow-500"],
+    [59,  "bg-red-500"],
+    [0,   "bg-red-500"],
+  ]
+
+  it.each(cases)("score=%i → %s", (score, expected) => {
+    const r = getSimilarityBg(score)
+    expect(r).toBe(expected)
+    const note =
+      score === 80 ? "green lower bound" :
+      score === 79 ? "yellow upper bound" :
+      score === 60 ? "yellow lower bound" :
+      score === 59 ? "red upper bound" : ""
+    out("BG", `score=${score}`, r, note)
   })
 
-  it("returns 'bg-green-500' for score=100 (maximum score)", () => {
-    expect(getSimilarityBg(100)).toBe("bg-green-500")
-    process.stdout.write("[BG] getSimilarityBg(100) → 'bg-green-500' ✓\n")
-  })
-
-  it("returns 'bg-yellow-500' for score=60 (yellow tier lower boundary)", () => {
-    expect(getSimilarityBg(60)).toBe("bg-yellow-500")
-    process.stdout.write("[BG] getSimilarityBg(60) → 'bg-yellow-500' ✓\n")
-  })
-
-  it("returns 'bg-yellow-500' for score=79 (yellow tier upper boundary)", () => {
-    expect(getSimilarityBg(79)).toBe("bg-yellow-500")
-    process.stdout.write("[BG] getSimilarityBg(79) → 'bg-yellow-500' ✓\n")
-  })
-
-  it("returns 'bg-red-500' for score=0 (minimum score)", () => {
-    expect(getSimilarityBg(0)).toBe("bg-red-500")
-    process.stdout.write("[BG] getSimilarityBg(0) → 'bg-red-500' ✓\n")
-  })
-
-  it("returns 'bg-red-500' for score=59 (red tier upper boundary)", () => {
-    expect(getSimilarityBg(59)).toBe("bg-red-500")
-    process.stdout.write("[BG] getSimilarityBg(59) → 'bg-red-500' ✓\n")
+  it("bg- and text- tiers are in sync: same score always maps to the same color name", () => {
+    const scores = [100, 80, 79, 70, 60, 59, 0]
+    for (const s of scores) {
+      const color = getSimilarityColor(s)   // e.g. text-green-500
+      const bg    = getSimilarityBg(s)       // e.g. bg-green-500
+      const colorName = color.replace("text-", "")
+      const bgName    = bg.replace("bg-", "")
+      expect(colorName).toBe(bgName)
+    }
+    out("SYNC", "text- vs bg- at same score", "color names match ✓")
   })
 })
 
 // ===========================================================================
-// getDeviationBg()
+// getDeviationBg()   thresholds: <10° green | <20° yellow | ≥20° red
 // ===========================================================================
 
-describe("getDeviationBg — map an angle deviation (degrees) to a Tailwind background-color class for the comparison table", () => {
-  /**
-   * Deviation tiers:
-   *   deviation < 10° → green bg (acceptable — within ±10° is good clinical form)
-   *   deviation in [10°, 19°] → yellow bg (moderate — worth noting)
-   *   deviation >= 20° → red bg (significant — intervention warranted)
-   *
-   * These classes include dark mode variants (e.g. dark:bg-green-950/20)
-   * to ensure the comparison table is readable in both light and dark themes.
-   */
+describe("getDeviationBg() — angle deviation (°) → Tailwind bg-color class for comparison table", () => {
 
-  describe("green tier (deviation < 10°)", () => {
-    it("returns the green background class for deviation=0°, the ideal case of zero deviation from the reference", () => {
-      expect(getDeviationBg(0)).toBe("bg-green-50 dark:bg-green-950/20")
-      process.stdout.write("[DEV] getDeviationBg(0) → green bg ✓\n")
-    })
-
-    it("returns the green background class for deviation=9°, just below the yellow threshold", () => {
-      expect(getDeviationBg(9)).toBe("bg-green-50 dark:bg-green-950/20")
-      process.stdout.write("[DEV] getDeviationBg(9) → green bg ✓\n")
-    })
-
-    it("returns the green background class for deviation=9.9°, confirming the threshold is strictly < 10", () => {
-      expect(getDeviationBg(9.9)).toBe("bg-green-50 dark:bg-green-950/20")
-      process.stdout.write("[DEV] getDeviationBg(9.9) → green bg ✓\n")
-    })
+  beforeAll(() => {
+    HEAD("getDeviationBg()")
+    process.stdout.write(`${SEP}\n`)
+    process.stdout.write("  thresholds:  deviation < 10°  →  green  |  < 20°  →  yellow  |  ≥ 20°  →  red\n")
+    process.stdout.write(`${SEP}\n`)
   })
 
-  describe("yellow tier (deviation in [10°, 19°])", () => {
-    it("returns the yellow background class for deviation=10°, the exact lower boundary of the yellow tier", () => {
-      expect(getDeviationBg(10)).toBe("bg-yellow-50 dark:bg-yellow-950/20")
-      process.stdout.write("[DEV] getDeviationBg(10) → yellow bg ✓\n")
-    })
+  const GREEN  = "bg-green-50 dark:bg-green-950/20"
+  const YELLOW = "bg-yellow-50 dark:bg-yellow-950/20"
+  const RED    = "bg-red-50 dark:bg-red-950/20"
 
-    it("returns the yellow background class for deviation=19°, the exact upper boundary of the yellow tier", () => {
-      expect(getDeviationBg(19)).toBe("bg-yellow-50 dark:bg-yellow-950/20")
-      process.stdout.write("[DEV] getDeviationBg(19) → yellow bg ✓\n")
-    })
-
-    it("returns the yellow background class for deviation=15°, the midpoint of the yellow tier", () => {
-      expect(getDeviationBg(15)).toBe("bg-yellow-50 dark:bg-yellow-950/20")
-      process.stdout.write("[DEV] getDeviationBg(15) → yellow bg ✓\n")
-    })
+  it("deviation=0° → green (ideal: zero error)", () => {
+    const r = getDeviationBg(0)
+    expect(r).toBe(GREEN)
+    out("GREEN", "deviation=0°", "green-50")
   })
 
-  describe("red tier (deviation >= 20°)", () => {
-    it("returns the red background class for deviation=20°, the exact lower boundary of the red tier", () => {
-      expect(getDeviationBg(20)).toBe("bg-red-50 dark:bg-red-950/20")
-      process.stdout.write("[DEV] getDeviationBg(20) → red bg ✓\n")
-    })
-
-    it("returns the red background class for deviation=45°, a significant mid-range deviation", () => {
-      expect(getDeviationBg(45)).toBe("bg-red-50 dark:bg-red-950/20")
-      process.stdout.write("[DEV] getDeviationBg(45) → red bg ✓\n")
-    })
+  it("deviation=9° → green (just below threshold)", () => {
+    const r = getDeviationBg(9)
+    expect(r).toBe(GREEN)
+    out("GREEN", "deviation=9°", "green-50")
   })
 
-  describe("boundary precision tests — confirm exact threshold values", () => {
-    it("deviation=10° maps to yellow (NOT green), confirming the yellow tier starts at exactly 10", () => {
-      expect(getDeviationBg(10)).toBe("bg-yellow-50 dark:bg-yellow-950/20")
-      process.stdout.write("[DEV] Boundary: deviation=10° → yellow bg (NOT green) ✓\n")
-    })
+  it("deviation=9.9° → green (strictly < 10, confirms float boundary)", () => {
+    const r = getDeviationBg(9.9)
+    expect(r).toBe(GREEN)
+    out("GREEN", "deviation=9.9°", "green-50", "strictly < 10")
+  })
 
-    it("deviation=20° maps to red (NOT yellow), confirming the red tier starts at exactly 20", () => {
-      expect(getDeviationBg(20)).toBe("bg-red-50 dark:bg-red-950/20")
-      process.stdout.write("[DEV] Boundary: deviation=20° → red bg (NOT yellow) ✓\n")
-    })
+  it("deviation=10° → yellow (green→yellow boundary, inclusive at 10)", () => {
+    const r = getDeviationBg(10)
+    expect(r).toBe(YELLOW)
+    out("YELLOW", "deviation=10°", "yellow-50", "lower bound — NOT green")
+  })
+
+  it("deviation=15° → yellow", () => {
+    const r = getDeviationBg(15)
+    expect(r).toBe(YELLOW)
+    out("YELLOW", "deviation=15°", "yellow-50")
+  })
+
+  it("deviation=19° → yellow (just below red boundary)", () => {
+    const r = getDeviationBg(19)
+    expect(r).toBe(YELLOW)
+    out("YELLOW", "deviation=19°", "yellow-50", "just below red")
+  })
+
+  it("deviation=20° → red (yellow→red boundary, inclusive at 20)", () => {
+    const r = getDeviationBg(20)
+    expect(r).toBe(RED)
+    out("RED", "deviation=20°", "red-50", "lower bound — NOT yellow")
+  })
+
+  it("deviation=45° → red", () => {
+    const r = getDeviationBg(45)
+    expect(r).toBe(RED)
+    out("RED", "deviation=45°", "red-50")
+  })
+
+  it("output always includes a dark-mode variant class", () => {
+    for (const deg of [5, 15, 25]) {
+      expect(getDeviationBg(deg)).toContain("dark:")
+    }
+    out("DARK", "5°, 15°, 25°", "all include dark: class ✓")
   })
 })
