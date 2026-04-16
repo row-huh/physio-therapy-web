@@ -103,11 +103,6 @@ export function ComparisonRecorder({
   // Locked primary angle — resolved once, used everywhere in the session
   const resolvedPrimaryRef = useRef<string | null>(null)
 
-  const thresholdGood = useRef(false)  
-  const thresholdValid = useRef(false)
-  const thresholdRest = useRef(false)
-
-
 
   // audio feedback
   const lastAudioTimeRef = useRef<number>(0)     // cooldown tracker
@@ -650,42 +645,6 @@ const updateRepCount = (state: string) => {
 
       // Valid rep condition
       if (delta >= MIN_PEAK_DELTA && cooledDown) {
-
-        // Increment rep count
-        setRepCount(r => r + 1)
-        lastRepTimestampRef.current = nowTs
-
-        // Build cycle window: last 1.5s
-        const cycle = angleHistoryRef.current.filter(
-          h => nowTs - h.timestamp <= 1.5
-        )
-
-        // Evaluate rep quality
-        const isCorrect = classifyRepQuality(cycle, primaryName)
-        const minMax = computeRepMinMax(cycle, primaryName)
-
-        // Store rep details for UI / analysis
-        if (minMax) {
-          setRepDetails(prev => ([
-            ...prev,
-            {
-              index: prev.length + 1,
-              startTime: cycle.length
-                ? cycle[0].timestamp
-                : nowTs - 1.5,
-              endTime: nowTs,
-              primaryAngle: minMax.primary,
-              minAngle: Math.round(minMax.min),
-              maxAngle: Math.round(minMax.max),
-              correct: isCorrect,
-            }
-          ]))
-        }
-      }
-      else if (thresholdGood && thresholdValid && thresholdRest) {
-        thresholdGood.current = true
-        thresholdValid.current = true
-        thresholdRest.current = true
 
         // Increment rep count
         setRepCount(r => r + 1)
@@ -1323,7 +1282,6 @@ const startPoseLoop = () => {
             } else if (primaryVal < midpoint) {
               // At or near rest/flexed position - this is a valid position, not "bad"
               currentThresholdStatus = "rest"
-              thresholdRest.current = true
               // Reset peak when returning to rest (beginning of new rep cycle)
               repCyclePeakRef.current = primaryVal
             } else {
@@ -1331,10 +1289,8 @@ const startPoseLoop = () => {
               const statusAngle = repCyclePeakRef.current
               if (statusAngle >= idealPeak * TOLERANCE) {
                 currentThresholdStatus = "good"
-                thresholdGood.current = true
               } else if (statusAngle >= refPeak * TOLERANCE) {
                 currentThresholdStatus = "valid"
-                thresholdValid.current = true
               } else {
                 currentThresholdStatus = "below"
               }
