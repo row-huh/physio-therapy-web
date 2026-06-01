@@ -44,6 +44,9 @@ export function RecordExercise({
   const [exerciseType, setExerciseType] = useState(defaultType)
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const [allowProgression, setAllowProgression] = useState(true)
+    const [reps, setReps] = useState(10)
+  const [sets, setSets] = useState(3)
+  const [frequency, setFrequency] = useState("daily")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<PoseAnalysisResult | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -159,15 +162,20 @@ export function RecordExercise({
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({
-            patient_id: patientId,
-            name: videoName,
-            exercise_type: exerciseType,
-            video_path: videoPath,
-            video_url: videoUrl,
-            template: result.learnedTemplate,
-            allow_progression: allowProgression,
-          }),
+           body: JSON.stringify({
+  patient_id: patientId,
+  name: videoName,
+  exercise_type: exerciseType,
+  video_path: videoPath,
+  video_url: videoUrl,
+  template: result.learnedTemplate,
+  allow_progression: allowProgression,
+
+  reps,
+  sets,
+  frequency,
+}),
+   
         })
 
         if (!res.ok) {
@@ -226,7 +234,48 @@ export function RecordExercise({
                 onChange={(e) => setExerciseName(e.target.value)}
               />
             </div>
+            <div className="space-y-2">
+  <label className="block text-sm font-medium">
+    Repetitions
+  </label>
 
+  <Input
+    type="number"
+    value={reps}
+    onChange={(e) => setReps(Number(e.target.value))}
+  />
+</div>
+
+<div className="space-y-2">
+  <label className="block text-sm font-medium">
+    Sets
+  </label>
+
+  <Input
+    type="number"
+    value={sets}
+    onChange={(e) => setSets(Number(e.target.value))}
+  />
+</div>
+
+<div className="space-y-2">
+  <label className="block text-sm font-medium">
+    Frequency
+  </label>
+
+  <select
+    value={frequency}
+    onChange={(e) => setFrequency(e.target.value)}
+    className="w-full rounded-md border px-3 py-2"
+  >
+    <option value="daily">Daily</option>
+    <option value="3_times_week">3 Times / Week</option>
+    <option value="5_times_week">5 Times / Week</option>
+    <option value="weekly">Weekly</option>
+  </select>
+</div>
+
+            
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div className="space-y-0.5">
                 <label htmlFor="allow-progression" className="text-sm font-medium">

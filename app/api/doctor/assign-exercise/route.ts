@@ -38,11 +38,27 @@ export async function POST(req: Request) {
     if (!doctorRow) {
       return NextResponse.json({ error: "Only doctors can assign exercises" }, { status: 403 })
     }
+const body = await req.json()
+const {
+  patient_id,
+  name,
+  exercise_type,
+  video_url,
+  template,
+  reps,
+  sets,
+  frequency
+} = body
 
-    const body = await req.json()
-    const { patient_id, name, exercise_type, video_url, template } = body
-
-    if (!patient_id || !name || !exercise_type || !video_url) {
+if (
+  !patient_id ||
+  !name ||
+  !exercise_type ||
+  !video_url ||
+  !reps ||
+  !sets ||
+  !frequency
+) {
       return NextResponse.json({
         error: "patient_id, name, exercise_type, and video_url are required"
       }, { status: 400 })
@@ -64,14 +80,25 @@ export async function POST(req: Request) {
     const { data: assignment, error: insertErr } = await supabaseAdmin
       .from("exercise_assignments")
       .insert({
-        name,
-        exercise_type,
-        video_url,
-        template: template || null,
-        doctor_id: user.id,
-        patient_id,
-      })
-      .select("id, name, exercise_type, created_at")
+  name,
+  exercise_type,
+  video_url,
+  template: template || null,
+  doctor_id: user.id,
+  patient_id,
+
+  reps,
+  sets,
+  frequency
+})
+.select(`
+  id,
+  name,
+  exercise_type,
+  reps,
+  sets,
+  frequency
+`)  
       .single()
 
     if (insertErr) {
