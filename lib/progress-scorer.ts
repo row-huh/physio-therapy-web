@@ -13,7 +13,10 @@ import type {
   LearnedExerciseTemplate,
   DetectedState,
 } from "./exercise-state-learner"
+import type { PoseV2Template } from "./template-learner"
 import { getExerciseConfig } from "./exercise-config"
+
+type AnyTemplate = PoseV2Template | LearnedExerciseTemplate
 
 
 export interface SessionScore {
@@ -41,20 +44,29 @@ function clamp(value: number, min: number, max: number): number {
 
 /**
  * Identify the primary angle for an exercise type.
- * Uses the first angle from exercise-config (e.g. "left_knee" for knee-extension).
+ * For v2 templates, uses primarySignal.feature directly.
+ * Falls back to the first angle from exercise-config.
  */
-function getPrimaryAngle(exerciseType: string): string | null {
+function getPrimaryAngle(exerciseType: string, template?: AnyTemplate): string | null {
+  if (template && (template as PoseV2Template).templateVersion === 2) {
+    const feat = (template as PoseV2Template).primarySignal?.feature
+    if (feat) return feat
+  }
   const config = getExerciseConfig(exerciseType)
   return config?.anglesOfInterest[0] ?? null
 }
 
 /**
- * Extract the peak (max) value of a given angle across all template states.
- * "Peak" = the largest mean value the angle reaches in any state.
+ * Extract the peak value for a given angle.
+ * For v2 templates, reads primarySignal.peakValue directly when applicable.
  */
-function getAnglePeak(template: LearnedExerciseTemplate, angleName: string): number | null {
+function getAnglePeak(template: AnyTemplate, angleName: string): number | null {
+  if ((template as PoseV2Template).templateVersion === 2) {
+    const v2 = template as PoseV2Template
+    if (v2.primarySignal?.feature === angleName) return v2.primarySignal.peakValue
+  }
   let peak: number | null = null
-  for (const state of template.states) {
+  for (const state of (template as LearnedExerciseTemplate).states ?? []) {
     const range = state.angleRanges[angleName]
     if (range) {
       const val = range.mean
@@ -65,11 +77,16 @@ function getAnglePeak(template: LearnedExerciseTemplate, angleName: string): num
 }
 
 /**
- * Extract the trough (min) value of a given angle across all template states.
+ * Extract the trough (rest) value for a given angle.
+ * For v2 templates, reads primarySignal.restValue directly when applicable.
  */
-function getAngleTrough(template: LearnedExerciseTemplate, angleName: string): number | null {
+function getAngleTrough(template: AnyTemplate, angleName: string): number | null {
+  if ((template as PoseV2Template).templateVersion === 2) {
+    const v2 = template as PoseV2Template
+    if (v2.primarySignal?.feature === angleName) return v2.primarySignal.restValue
+  }
   let trough: number | null = null
-  for (const state of template.states) {
+  for (const state of (template as LearnedExerciseTemplate).states ?? []) {
     const range = state.angleRanges[angleName]
     if (range) {
       const val = range.mean
@@ -139,13 +156,13 @@ function computeSecondaryFormScore(
  * @param allowProgression   true = dual-threshold mode; false = ref is both floor & ceiling
  */
 export function scoreSession(
-  referenceTemplate: LearnedExerciseTemplate,
-  idealTemplate: LearnedExerciseTemplate | null,
-  patientTemplate: LearnedExerciseTemplate,
+  referenceTemplate: AnyTemplate,
+  idealTemplate: AnyTemplate | null,
+  patientTemplate: AnyTemplate,
   allowProgression: boolean
 ): SessionScore {
-  const exerciseType = referenceTemplate.exerciseType
-  const primaryAngle = getPrimaryAngle(exerciseType)
+  const exerciseType = (referenceTemplate as LearnedExerciseTemplate).exerciseType
+  const primaryAngle = getPrimaryAngle(exerciseType, referenceTemplate)
   const allAngles = getExerciseConfig(exerciseType)?.anglesOfInterest ?? []
 
   // Fallback: if no primary angle is configured, return a zeroed-out score

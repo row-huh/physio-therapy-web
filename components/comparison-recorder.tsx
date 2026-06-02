@@ -15,7 +15,13 @@ import {
 } from "@/lib/rep-error-calculator"
 
 import { OneEuroFilter } from "@/lib/filters"
-import { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
+import type { LearnedExerciseTemplate } from "@/lib/exercise-state-learner"
+import type { PoseV2Template } from "@/lib/template-learner"
+import type { FeatureFrame } from "@/lib/pose-features"
+import { scoreRepWithDtw } from "@/lib/dtw-scorer"
+import { ANGLE_SEGMENTS, segmentKey } from "@/lib/pose-angles"
+
+type AnyTemplate = PoseV2Template | LearnedExerciseTemplate
 
 
 const getAudioFeedback = (lang: "en" | "ur") => ({
@@ -50,8 +56,8 @@ interface ComparisonRecorderProps {
   exerciseName?: string
   exerciseType?: string
   enableTestMode?: boolean
-  referenceTemplate?: LearnedExerciseTemplate
-  idealTemplate?: LearnedExerciseTemplate
+  referenceTemplate?: AnyTemplate
+  idealTemplate?: AnyTemplate
   allowProgression?: boolean
   fullscreen?: boolean
 }
@@ -99,7 +105,7 @@ export function ComparisonRecorder({
   const streamRef = useRef<MediaStream | null>(null)
   const poseRef = useRef<PoseLandmarker | null>(null)
   const rafRef = useRef<number | null>(null)
-  const learnedTemplateRef = useRef<LearnedExerciseTemplate | null>(null)
+  const learnedTemplateRef = useRef<AnyTemplate | null>(null)
   // Locked primary angle — resolved once, used everywhere in the session
   const resolvedPrimaryRef = useRef<string | null>(null)
 
@@ -204,6 +210,20 @@ export function ComparisonRecorder({
   const angleHistoryRef = useRef<Array<{ timestamp: number; angles: JointAngleData }>>([])
   const primaryAngleHistoryRef = useRef<Array<{ t: number; value: number }>>([])
 
+  // Full-session frame buffer + per-rep DTW scores. This is what makes the
+  // headline accuracy reflect whether the movement actually MATCHES the
+  // reference (shape/tempo), not merely that some angle was reached.
+  const patientFramesRef = useRef<FeatureFrame[]>([])
+  const repStartIdxRef = useRef<number>(0)
+  const repScoresRef = useRef<number[]>([])
+  // Frame index of the most recent rest position — used to anchor the start of
+  // a rep's scoring window (so idle/setup time before the first rep is excluded).
+  const lastRestIdxRef = useRef<number>(0)
+  // Latched max travel of the primary angle away from rest during the current
+  // cycle. Unlike repCyclePeakRef (which resets on the downswing) this survives
+  // the whole rep, so it can reliably gate "did the patient reach full ROM?".
+  const cyclePeakPrimaryRef = useRef<number>(0)
+
   const lastStateRef = useRef<string>("")
   const hasVisitedPeakRef = useRef(false)
 
@@ -218,20 +238,37 @@ export function ComparisonRecorder({
   const getRepThresholds = () => {
     if (repThresholdsRef.current) return repThresholdsRef.current
     const tmpl = referenceTemplate ?? learnedTemplateRef.current
-    const primary = resolvedPrimaryRef.current ?? anglesOfInterest?.[0]
-    if (tmpl && primary) {
-      let peak = 0, start = Infinity
-      for (const s of tmpl.states) {
-        const r = s.angleRanges[primary]
-        if (r) {
-          if (r.mean > peak) peak = r.mean
-          if (r.mean < start) start = r.mean
+    if (tmpl) {
+      // v2 template: use primarySignal thresholds directly
+      const v2 = (tmpl as PoseV2Template).templateVersion === 2 ? (tmpl as PoseV2Template) : null
+      if (v2?.primarySignal?.feature) {
+        // Lock primary angle to the template's primary feature
+        resolvedPrimaryRef.current = v2.primarySignal.feature
+        repThresholdsRef.current = {
+          up: v2.primarySignal.restThreshold,
+          down: v2.primarySignal.restThreshold,
         }
-      }
-      if (peak > 0 && start < Infinity) {
-        const midpoint = (start + peak) / 2
-        repThresholdsRef.current = { up: midpoint, down: midpoint }
         return repThresholdsRef.current
+      }
+
+      // Legacy v1: derive from state angle ranges
+      const primary = resolvedPrimaryRef.current ?? anglesOfInterest?.[0]
+      if (primary) {
+        const legacyTmpl = tmpl as LearnedExerciseTemplate
+        let peak = 0
+        let start = Infinity
+        for (const s of legacyTmpl.states) {
+          const r = s.angleRanges[primary]
+          if (r) {
+            if (r.mean > peak) peak = r.mean
+            if (r.mean < start) start = r.mean
+          }
+        }
+        if (peak > 0 && start < Infinity) {
+          const midpoint = (start + peak) / 2
+          repThresholdsRef.current = { up: midpoint, down: midpoint }
+          return repThresholdsRef.current
+        }
       }
     }
     // Fallback when no template
@@ -731,6 +768,13 @@ const openWebcam = async () => {
     setIsStreaming(true)
     sessionStartTimeRef.current = Date.now()
 
+    // Fresh frame buffer + rep scores for this session.
+    patientFramesRef.current = []
+    repStartIdxRef.current = 0
+    repScoresRef.current = []
+    lastRestIdxRef.current = 0
+    cyclePeakPrimaryRef.current = 0
+
   } catch (e) {
     console.error("Failed to open webcam", e)
     alert("Unable to access camera. Please check permissions and try again.")
@@ -782,6 +826,13 @@ const handleTestVideoUpload = async (
 
       // Initialize pose system
       await initPose()
+
+      // Fresh frame buffer + rep scores for this take.
+      patientFramesRef.current = []
+      repStartIdxRef.current = 0
+      repScoresRef.current = []
+      lastRestIdxRef.current = 0
+      cyclePeakPrimaryRef.current = 0
 
       setTestMode(true)
       setIsStreaming(true)
@@ -845,6 +896,11 @@ const resetTestVideo = () => {
 
   angleFiltersRef.current.clear()
   angleHistoryRef.current = []
+  patientFramesRef.current = []
+  repStartIdxRef.current = 0
+  repScoresRef.current = []
+  lastRestIdxRef.current = 0
+  cyclePeakPrimaryRef.current = 0
 
   setRepDetails([])
 
@@ -861,10 +917,15 @@ const saveAndEndSession = () => {
   const durationSeconds = sessionStartTimeRef.current > 0
     ? Math.round((Date.now() - sessionStartTimeRef.current) / 1000)
     : 0
+  // Form score = average per-rep DTW match against the reference. Falls back to
+  // the per-frame form samples only when no rep could be DTW-scored.
+  const repScores = repScoresRef.current
   const samples = formScoreSamplesRef.current
-  const avgFormScore = samples.length > 0
-    ? Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
-    : 0
+  const avgFormScore = repScores.length > 0
+    ? Math.round(repScores.reduce((a, b) => a + b, 0) / repScores.length)
+    : samples.length > 0
+      ? Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+      : 0
 
   const summary: SessionEndData = {
     reps_completed: repCount,
@@ -886,10 +947,8 @@ const saveAndEndSession = () => {
 // STOP TEST MODE
 // Completely stops video + tracking loop, saves session first
 const stopTestMode = () => {
-  // Save session snapshot before resetting
-  if (onSessionEnd && repCount > 0) {
-    saveAndEndSession()
-  }
+  // Always save session snapshot — summary shows even with 0 reps
+  saveAndEndSession()
 
   if (videoRef.current) {
     videoRef.current.pause()
@@ -923,6 +982,11 @@ const stopTestMode = () => {
   angleFiltersRef.current.clear()
   angleHistoryRef.current = []
   formScoreSamplesRef.current = []
+  patientFramesRef.current = []
+  repStartIdxRef.current = 0
+  repScoresRef.current = []
+  lastRestIdxRef.current = 0
+  cyclePeakPrimaryRef.current = 0
 
   setRepDetails([])
 
@@ -1000,6 +1064,110 @@ const startPoseLoop = () => {
   const allTemplateStates = referenceTemplate
     ? [...referenceTemplate.states, ...(idealTemplate?.states ?? [])]
     : []
+
+  const SEGMENT_TOLERANCE = 15 // degrees of slack before a segment goes red
+
+  // Per-tracked-angle reference positions at the rest and peak of the rep,
+  // taken from the v2 phase prototypes. These let us judge each joint against
+  // where it should be at the CURRENT point in the movement (phase-aware),
+  // rather than just an overall envelope.
+  const refV2Color =
+    (referenceTemplate as PoseV2Template | undefined)?.templateVersion === 2
+      ? (referenceTemplate as PoseV2Template)
+      : null
+  const colorPrimary = refV2Color?.primarySignal?.feature ?? null
+  const colorRefStart = refV2Color?.primarySignal?.restValue ?? 0
+
+  const angleTargets: Record<string, { rest: number; peak: number }> = {}
+  if (refV2Color) {
+    const restPhase = refV2Color.phases.find((p) => p.id === "rest")
+    const peakPhase = refV2Color.phases.find((p) => p.id === "peak")
+    for (const angle of anglesOfInterest ?? []) {
+      const r = restPhase?.featureMeans[angle]
+      const pk = peakPhase?.featureMeans[angle]
+      if (r !== undefined && pk !== undefined) angleTargets[angle] = { rest: r, peak: pk }
+    }
+  }
+
+  // Reverse map: skeleton segment key -> the tracked angles that govern it.
+  const segmentToAngles = new Map<string, string[]>()
+  if (anglesOfInterest) {
+    for (const angle of anglesOfInterest) {
+      for (const [a, b] of ANGLE_SEGMENTS[angle] ?? []) {
+        const key = segmentKey(a, b)
+        const list = segmentToAngles.get(key) ?? []
+        list.push(angle)
+        segmentToAngles.set(key, list)
+      }
+    }
+  }
+
+  // Is a tracked angle currently "wrong" (its segment should be red)?
+  // - The PRIMARY joint is judged on reaching the target range of motion: while
+  //   you extend it stays red until the rep's peak reaches ~90% of target, then
+  //   green — and the verdict persists through the whole rep (it is keyed to the
+  //   sticky cycle-peak, which only resets at rest). This is what tells the
+  //   patient "keep stretching, you're short".
+  // - SECONDARY joints are judged against their expected position at the current
+  //   phase of the movement (interpolated rest→peak by how far the primary has
+  //   travelled), so a mis-posed limb reads red continuously through the rep.
+  const angleIsBad = (angle: string, angles: JointAngleData): boolean => {
+    const t = angleTargets[angle]
+    if (!t) return false // no reference for this joint → don't flag it
+    const actual = angles[angle]
+    if (actual === undefined) return false
+
+    // Coloring is judged against the prescribed (reference) ROM, not the ideal
+    // progression target — green means "you did it correctly".
+    const target = refPeakRef.current
+    const start = colorRefStart
+    const range = Math.abs(target - start) || 1
+
+    if (angle === colorPrimary) {
+      const progress = Math.abs(actual - start) / range
+      if (progress < 0.2) return false // at/near rest — fine
+      // Red until this cycle's peak has reached the target ROM, then green. The
+      // verdict persists through the whole rep because it reads the LATCHED
+      // cycle peak (which only resets at the bottom of the next rep).
+      const reached = cyclePeakPrimaryRef.current >= 0.9 * range
+      return !reached
+    }
+
+    // Secondary joint: expected position at the current primary phase.
+    const primaryVal = colorPrimary ? angles[colorPrimary] : undefined
+    const phase =
+      primaryVal !== undefined
+        ? Math.min(1, Math.max(0, Math.abs(primaryVal - start) / range))
+        : 0
+    const expected = t.rest + (t.peak - t.rest) * phase
+    return Math.abs(actual - expected) > SEGMENT_TOLERANCE
+  }
+
+  // Draw the skeleton with per-segment colours: green = correct, red = needs
+  // adjustment, dim = not tracked for this exercise.
+  const drawColoredSkeleton = (landmarks: any[], angles: JointAngleData) => {
+    const w = canvasRef.current?.width || 640
+    const h = canvasRef.current?.height || 480
+    for (const { start, end } of POSE_CONNECTIONS) {
+      const p1 = landmarks[start]
+      const p2 = landmarks[end]
+      if (!p1 || !p2) continue
+
+      const related = segmentToAngles.get(segmentKey(start, end))
+      let color = "rgba(255,255,255,0.35)" // untracked segment
+      if (related && related.length > 0 && referenceTemplate) {
+        const bad = related.some((angle) => angleIsBad(angle, angles))
+        color = bad ? "#ef4444" : "#22c55e"
+      }
+
+      ctx.beginPath()
+      ctx.moveTo(p1.x * w, p1.y * h)
+      ctx.lineTo(p2.x * w, p2.y * h)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 7
+      ctx.stroke()
+    }
+  }
 
 
   // FRAME RENDER FUNCTION
@@ -1097,6 +1265,15 @@ const startPoseLoop = () => {
         angles: smoothedAngles
       })
 
+      // Full-session frame buffer (never trimmed) so a completed rep can be
+      // sliced out and DTW-scored against the reference template.
+      patientFramesRef.current.push({
+        timestamp: ts / 1000,
+        values: smoothedAngles,
+        visibility: {},
+        dropout: false,
+      })
+
 
       // PRIMARY ANGLE (locked for session) - reason for this is that mediapipe doesn't get confused when tracking one exercise
       // for example, when tracking knee extensisons, the model sometimes gets confused which leg it is that is extending and often makes judgement errors
@@ -1160,49 +1337,89 @@ const startPoseLoop = () => {
                 // Relaxed logic: just check if we reached the target state, ignore where we came from
                 // This handles intermediate states (start -> mid -> peak -> mid -> start)
                 if (mapped.id === peakId) {
+                  if (!hasVisitedPeakRef.current) {
+                    // Out-swing detected: anchor this rep's scoring window at the
+                    // last rest position before the peak, so the window is exactly
+                    // one rest→peak→rest cycle.
+                    repStartIdxRef.current = lastRestIdxRef.current
+                  }
                   hasVisitedPeakRef.current = true
-                  // Record rep quality NOW while repCyclePeakRef still holds the
-                  // actual peak. By the time we return to startId (rep completion),
-                  // the threshold section will have already reset repCyclePeakRef
-                  // (when primaryVal drops below midpoint), so we can't check there.
-                  const TOLERANCE = 0.9
-                  const cycleP = repCyclePeakRef.current
-                  repWasValidRef.current = refPeakRef.current > 0 && cycleP >= refPeakRef.current * TOLERANCE
-                  repWasGoodRef.current = idealPeakRef.current > 0 && cycleP >= idealPeakRef.current * TOLERANCE
+                  // NOTE: ROM achievement (repWasValid/Good) is NOT decided here.
+                  // The peak STATE is entered only ~midway up the movement, so the
+                  // cycle peak isn't known yet. It is tracked continuously and
+                  // latched in the dual-threshold block below.
                 }
                 if (mapped.id === startId && hasVisitedPeakRef.current) {
-                  // Use pre-recorded quality from peak detection time
-                  if (repWasValidRef.current) {
+                  // Score the just-completed cycle against the reference template
+                  // (shape via DTW + ROM + tempo). This is the gate that decides
+                  // whether the cycle was actually THIS exercise: random dancing
+                  // or "do the exercise then drop your arms to your sides" follows
+                  // a different path and scores low, so it is NOT counted as a rep.
+                  const MIN_REP_SCORE = 60
+                  let repScore = 0
+                  let scored = false
+                  const refV2 =
+                    (referenceTemplate as PoseV2Template | undefined)?.templateVersion === 2
+                      ? (referenceTemplate as PoseV2Template)
+                      : null
+                  if (refV2?.primarySignal?.feature) {
+                    const startIdx = repStartIdxRef.current
+                    const endIdx = patientFramesRef.current.length - 1
+                    if (endIdx - startIdx >= 5) {
+                      repScore = scoreRepWithDtw(
+                        refV2,
+                        patientFramesRef.current,
+                        startIdx,
+                        endIdx,
+                      ).overall
+                      scored = true
+                    }
+                  }
+
+                  // A rep ONLY counts when the patient actually reached the full
+                  // target range of motion (repWasValidRef, latched below) AND the
+                  // movement matched the exercise (shape via DTW, or legacy
+                  // fallback). A half-ROM rep or random dancing is not counted.
+                  const romReached = repWasValidRef.current
+                  const shapeOk = !refV2 || (scored && repScore >= MIN_REP_SCORE)
+                  const isRealRep = romReached && shapeOk
+
+                  if (isRealRep) {
+                    if (scored) repScoresRef.current.push(repScore)
+
+                    // "Good" reps additionally reached the ideal (progression)
+                    // ROM with a stronger shape match.
                     setLiveValidReps(v => v + 1)
+                    if (repWasGoodRef.current && repScore >= 78) {
+                      setLiveGoodReps(g => g + 1)
+                    }
+
+                    setRepCount(prev => {
+                      const newCount = prev + 1
+                      // ERROR CALCULATION
+                      if (learnedTemplateRef.current && anglesOfInterest) {
+                        const error = calculateRepError(
+                          smoothedAngles,
+                          learnedTemplateRef.current as import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+                          anglesOfInterest,
+                          newCount,
+                          ts / 1000
+                        )
+                        if (error) {
+                          setRepErrors(prevErrors => {
+                            const newErrors = [...prevErrors, error]
+                            const summary = analyzeRepTrends(newErrors)
+                            setErrorSummary(summary)
+                            return newErrors
+                          })
+                        }
+                      }
+                      return newCount
+                    })
                   }
-                  if (repWasGoodRef.current) {
-                    setLiveGoodReps(g => g + 1)
-                  }
+
                   repWasValidRef.current = false
                   repWasGoodRef.current = false
-
-                  setRepCount(prev => {
-                    const newCount = prev + 1
-                    // ERROR CALCULATION
-                   if (learnedTemplateRef.current && anglesOfInterest) {
-                      const error = calculateRepError(
-                        smoothedAngles,
-                        learnedTemplateRef.current,
-                        anglesOfInterest,
-                        newCount,
-                        ts / 1000
-                      )
-                      if (error) {
-                        setRepErrors(prevErrors => {
-                          const newErrors = [...prevErrors, error]
-                          const summary = analyzeRepTrends(newErrors)
-                          setErrorSummary(summary)
-                          return newErrors
-                        })
-                      }
-                    }
-                    return newCount
-                  })
                   hasVisitedPeakRef.current = false
                 }
                 lastStateRef.current = mapped.id
@@ -1233,22 +1450,37 @@ const startPoseLoop = () => {
           const primaryName = sessionPrimary
           const primaryVal = smoothedAngles[primaryName]
           if (primaryVal !== undefined) {
-            // Extract reference peak (highest angle) and start (lowest angle)
+            // Extract reference peak / start — prefer v2 primarySignal, fall back to states
             let refPeak = 0
             let refStart = Infinity
-            for (const s of referenceTemplate.states) {
-              const r = s.angleRanges[primaryName]
-              if (r) {
-                if (r.mean > refPeak) refPeak = r.mean
-                if (r.mean < refStart) refStart = r.mean
+            const refV2 = (referenceTemplate as PoseV2Template).templateVersion === 2
+              ? (referenceTemplate as PoseV2Template)
+              : null
+            if (refV2?.primarySignal?.feature === primaryName) {
+              refPeak = refV2.primarySignal.peakValue
+              refStart = refV2.primarySignal.restValue
+            } else {
+              for (const s of (referenceTemplate as import("@/lib/exercise-state-learner").LearnedExerciseTemplate).states) {
+                const r = s.angleRanges[primaryName]
+                if (r) {
+                  if (r.mean > refPeak) refPeak = r.mean
+                  if (r.mean < refStart) refStart = r.mean
+                }
               }
             }
             // Extract ideal peak
             const effectiveIdeal = allowProgression && idealTemplate ? idealTemplate : referenceTemplate
+            const effV2 = (effectiveIdeal as PoseV2Template).templateVersion === 2
+              ? (effectiveIdeal as PoseV2Template)
+              : null
             let idealPeak = 0
-            for (const s of effectiveIdeal.states) {
-              const r = s.angleRanges[primaryName]
-              if (r && r.mean > idealPeak) idealPeak = r.mean
+            if (effV2?.primarySignal?.feature === primaryName) {
+              idealPeak = effV2.primarySignal.peakValue
+            } else {
+              for (const s of (effectiveIdeal as import("@/lib/exercise-state-learner").LearnedExerciseTemplate).states) {
+                const r = s.angleRanges[primaryName]
+                if (r && r.mean > idealPeak) idealPeak = r.mean
+              }
             }
 
             // Sync refs so rep counting logic can use them
@@ -1297,6 +1529,28 @@ const startPoseLoop = () => {
             }
             setLiveThresholdStatus(currentThresholdStatus)
 
+            // Track the latest rest frame so the next rep's scoring window can
+            // start from where the movement actually began.
+            if (currentThresholdStatus === "rest") {
+              lastRestIdxRef.current = Math.max(0, patientFramesRef.current.length - 1)
+            }
+
+            // Latched ROM tracking: accumulate how far the primary travelled from
+            // rest this cycle, and latch valid/good once it reaches the target.
+            // Reset only at a genuine cycle bottom (at rest with no peak visited).
+            if (currentThresholdStatus === "rest" && !hasVisitedPeakRef.current) {
+              cyclePeakPrimaryRef.current = 0
+              repWasValidRef.current = false
+              repWasGoodRef.current = false
+            } else {
+              const travel = Math.abs(primaryVal - refStart)
+              if (travel > cyclePeakPrimaryRef.current) cyclePeakPrimaryRef.current = travel
+              const refRange = Math.abs(refPeak - refStart) || 1
+              const idealRange = Math.abs(idealPeak - refStart) || 1
+              if (cyclePeakPrimaryRef.current >= 0.9 * refRange) repWasValidRef.current = true
+              if (cyclePeakPrimaryRef.current >= 0.9 * idealRange) repWasGoodRef.current = true
+            }
+
           }
         }
 
@@ -1307,18 +1561,24 @@ const startPoseLoop = () => {
           updateRepCountFromSignal()
         }
 
-        drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
-          color: "#22c55e",
-          lineWidth: 8,
+        // Per-segment red/green feedback when a reference exists; otherwise
+        // fall back to a plain green skeleton.
+        if (referenceTemplate && anglesOfInterest && anglesOfInterest.length > 0) {
+          drawColoredSkeleton(landmarks, smoothedAngles)
+        } else {
+          drawer.drawConnectors(landmarks, POSE_CONNECTIONS, {
+            color: "#22c55e",
+            lineWidth: 8,
+          })
+        }
+
+        drawer.drawLandmarks(landmarks, {
+          radius: 6,
+          fillColor: "#ffffff",
+          color: "#0ea5e9",
+          lineWidth: 2
         })
-        
-        drawer.drawLandmarks(landmarks, { 
-          radius: 8, 
-          fillColor: "#22c55e",
-          color: "#16a34a",
-          lineWidth: 3 
-        })
-        
+
         drawAngleAnnotations(ctx, landmarks, smoothedAngles)
       }
 
@@ -1585,44 +1845,35 @@ const drawAngleAnnotations = (
 // =============================
 
 
+// Sync learnedTemplateRef whenever referenceTemplate prop changes (including async load)
 useEffect(() => {
-
-  // Use reference template as learned template if provided
   if (referenceTemplate) {
-    learnedTemplateRef.current = referenceTemplate as import("@/lib/exercise-state-learner").LearnedExerciseTemplate
+    learnedTemplateRef.current = referenceTemplate
+    // Force re-compute thresholds with the new template
+    repThresholdsRef.current = null
   }
-
-  // Resolve the primary angle once at init
   if (anglesOfInterest && anglesOfInterest.length > 0) {
     const tmpl = referenceTemplate ?? learnedTemplateRef.current
     resolvedPrimaryRef.current = resolvePrimaryAngle(anglesOfInterest, tmpl)
   }
+}, [referenceTemplate])
 
-  // Note: refPeakRef/idealPeakRef are synced in the per-frame render loop
-  // (threshold status section) where referenceTemplate is guaranteed available.
-
-   // CLEANUP ON UNMOUNT
+// Cleanup on unmount only
+useEffect(() => {
   return () => {
-
-    // Stop webcam stream
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
-
-    // Stop animation loop
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
-
-    // Release pose model
     if (poseRef.current) {
       poseRef.current.close()
       poseRef.current = null
     }
   }
-
 }, [])
 
   // FULLSCREEN RENDER MODE
@@ -2140,7 +2391,7 @@ const JOINT_ANGLES = new Set([
 
 function resolvePrimaryAngle(
   anglesOfInterest: string[],
-  template?: import("@/lib/exercise-state-learner").LearnedExerciseTemplate | null,
+  template?: import("@/lib/exercise-state-learner").LearnedExerciseTemplate | import("@/lib/template-learner").PoseV2Template | null,
 ): string {
   // Filter to joint-only angles that are in the interest list
   const jointCandidates = anglesOfInterest.filter(a => JOINT_ANGLES.has(a))
@@ -2174,7 +2425,7 @@ function resolvePrimaryAngle(
 // Calculates how close current pose is to template
 function computeFormScore(
   angles: JointAngleData,
-  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate | import("@/lib/template-learner").PoseV2Template,
   anglesOfInterest: string[],
   primaryOverride?: string,
 ): number {
@@ -2286,7 +2537,7 @@ function isWithinExerciseRange(
 // Maps current angles → closest template state
 function mapToTemplateState(
   angles: JointAngleData,
-  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate,
+  template: import("@/lib/exercise-state-learner").LearnedExerciseTemplate | import("@/lib/template-learner").PoseV2Template,
   anglesOfInterest: string[],
   primaryOverride?: string,
 ): { id: string; name: string } | null {

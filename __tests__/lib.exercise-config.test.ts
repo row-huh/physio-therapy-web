@@ -72,15 +72,9 @@ describe("EXERCISE_CONFIGS — the exercise registry array", () => {
     out("AOI", "all configs: anglesOfInterest", "non-empty array ✓")
   })
 
-  it("every angleConfig entry has type ('joint' or 'segment'), name, description", () => {
-    for (const cfg of EXERCISE_CONFIGS) {
-      for (const ac of cfg.angleConfigs) {
-        expect(["joint", "segment"]).toContain(ac.type)
-        expect(typeof ac.name).toBe("string")
-        expect(typeof ac.description).toBe("string")
-      }
-    }
-    out("ACONF", "all angleConfigs: type + name + description", "valid ✓")
+  it.skip("every angleConfig entry has type ('joint' or 'segment'), name, description", () => {
+    // angleConfigs was removed in v2 — joint groups don't carry per-angle metadata
+    out("ACONF", "angleConfigs removed (joint-group config)", "skipped ✓")
   })
 
   it("no two configs share the same id (ids are unique)", () => {
@@ -91,18 +85,18 @@ describe("EXERCISE_CONFIGS — the exercise registry array", () => {
   })
 
   describe("known registered exercises", () => {
-    it("knee-extension is registered with the correct display name", () => {
-      const cfg = EXERCISE_CONFIGS.find(c => c.id === "knee-extension")
+    it("'knees' joint group is registered (replaces knee-extension)", () => {
+      const cfg = EXERCISE_CONFIGS.find(c => c.id === "knees")
       expect(cfg).toBeDefined()
-      expect(cfg!.name).toBe("Knee Extension")
-      out("KNEE", "id='knee-extension'", `name='${cfg!.name}'`)
+      expect(cfg!.name).toBe("Knees")
+      out("KNEE", "id='knees'", `name='${cfg!.name}'`)
     })
 
-    it("scap-wall-slides is registered with the correct display name", () => {
-      const cfg = EXERCISE_CONFIGS.find(c => c.id === "scap-wall-slides")
+    it("'shoulders' joint group is registered (replaces scap-wall-slides)", () => {
+      const cfg = EXERCISE_CONFIGS.find(c => c.id === "shoulders")
       expect(cfg).toBeDefined()
-      expect(cfg!.name).toBe("Scap Wall Slides")
-      out("SCAP", "id='scap-wall-slides'", `name='${cfg!.name}'`)
+      expect(cfg!.name).toBe("Shoulders")
+      out("SCAP", "id='shoulders'", `name='${cfg!.name}'`)
     })
 
     it("knee-extension anglesOfInterest includes left_knee, right_knee, left_leg_segment", () => {
@@ -130,18 +124,19 @@ describe("getExerciseConfig() — lookup by id string", () => {
 
   beforeAll(() => { HEAD("getExerciseConfig()") })
 
-  it("returns the correct config for 'knee-extension'", () => {
+  it("resolves alias 'knee-extension' to the 'knees' joint group", () => {
     const cfg = getExerciseConfig("knee-extension")
     expect(cfg).toBeDefined()
-    expect(cfg!.id).toBe("knee-extension")
-    out("HIT", "getExerciseConfig('knee-extension')", `found: name='${cfg!.name}'`)
+    // Aliases resolve to the canonical joint-group id
+    expect(cfg!.id).toBe("knees")
+    out("HIT", "getExerciseConfig('knee-extension')", `resolved to id='${cfg!.id}' name='${cfg!.name}'`)
   })
 
-  it("returns the correct config for 'scap-wall-slides'", () => {
+  it("resolves alias 'scap-wall-slides' to the 'shoulders' joint group", () => {
     const cfg = getExerciseConfig("scap-wall-slides")
     expect(cfg).toBeDefined()
-    expect(cfg!.id).toBe("scap-wall-slides")
-    out("HIT", "getExerciseConfig('scap-wall-slides')", `found: name='${cfg!.name}'`)
+    expect(cfg!.id).toBe("shoulders")
+    out("HIT", "getExerciseConfig('scap-wall-slides')", `resolved to id='${cfg!.id}' name='${cfg!.name}'`)
   })
 
   it("returns undefined for a completely unknown id", () => {
@@ -168,11 +163,12 @@ describe("getExerciseConfig() — lookup by id string", () => {
     out("CASE", "getExerciseConfig('KNEE-EXTENSION')", "undefined")
   })
 
-  it("returned config object is the exact same reference as in EXERCISE_CONFIGS", () => {
-    const cfg = getExerciseConfig("knee-extension")
-    const found = EXERCISE_CONFIGS.find(c => c.id === "knee-extension")
-    expect(cfg).toBe(found)
-    out("REF", "getExerciseConfig vs EXERCISE_CONFIGS.find", "same object reference ✓")
+  it("getExerciseConfig alias returns same reference as direct group lookup", () => {
+    const viaAlias = getExerciseConfig("knee-extension")
+    const direct = getExerciseConfig("knees")
+    // Both resolve to the same object
+    expect(viaAlias).toBe(direct)
+    out("REF", "getExerciseConfig('knee-extension') vs getExerciseConfig('knees')", "same reference ✓")
   })
 })
 

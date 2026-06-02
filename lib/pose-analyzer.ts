@@ -5,6 +5,7 @@ export interface JointAngle {
   joint: string
   angle: number
   timestamp: number
+  visibility?: number // MediaPipe landmark visibility (0–1); undefined = not tracked
 }
 
 export interface MovementSequence {
@@ -21,7 +22,7 @@ export interface PoseAnalysisResult {
   jointAngles: JointAngle[]
   movements: MovementSequence[]
   summary: string
-  learnedTemplate?: import("./exercise-state-learner").LearnedExerciseTemplate
+  learnedTemplate?: import("./template-learner").PoseV2Template
 }
 
 /**
@@ -161,22 +162,24 @@ async function analyzeVideoForPoseBody(
     // Generate summary
     const summary = generateSummary(movements)
     
-    // Learn exercise states if exercise info provided
-    let learnedTemplate: import("./exercise-state-learner").LearnedExerciseTemplate | undefined
-    
+    // Learn exercise template if exercise info provided
+    let learnedTemplate: import("./template-learner").PoseV2Template | undefined
+
     if (exerciseInfo && anglesOfInterest && anglesOfInterest.length > 0) {
-      console.log("Learning exercise states from video...")
-      const { learnExerciseStates } = await import("./exercise-state-learner")
-      
-      learnedTemplate = learnExerciseStates(
+      console.log("Learning pose template from video (v2)...")
+      const { learnPoseTemplate } = await import("./template-learner")
+
+      learnedTemplate = learnPoseTemplate(
         jointAngles,
         exerciseInfo.name,
         exerciseInfo.type,
-        anglesOfInterest
+        anglesOfInterest,
       )
-      
-      console.log(`Learned ${learnedTemplate.states.length} states`)
-      console.log(`Template confidence: ${learnedTemplate.metadata.confidence}%`)
+
+      console.log(`Template: ${learnedTemplate.recommendedReps} reps, confidence=${learnedTemplate.quality.confidence}%`)
+      if (learnedTemplate.quality.warnings.length > 0) {
+        console.warn("Template warnings:", learnedTemplate.quality.warnings)
+      }
     }
     
     URL.revokeObjectURL(videoUrl)
@@ -327,10 +330,14 @@ function calculateJointAngles(
   anglesOfInterest?: string[]
 ): Omit<JointAngle, "timestamp">[] {
   const angles: Omit<JointAngle, "timestamp">[] = []
-  
+
   // Helper to get landmark coordinates
   const getLandmark = (index: number) => [landmarks[index].x, landmarks[index].y]
-  
+
+  // Helper: minimum visibility across the given landmark indices
+  const getVisibility = (...indices: number[]): number =>
+    Math.min(...indices.map((i) => landmarks[i]?.visibility ?? 1.0))
+
   // Helper to check if we should track this angle
   const shouldTrack = (angleName: string) => {
     if (!anglesOfInterest) return true
@@ -348,7 +355,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
         getLandmark(POSE_LANDMARKS.LEFT_WRIST)
       )
-      angles.push({ joint: "left_elbow", angle: leftElbowAngle })
+      angles.push({ joint: "left_elbow", angle: leftElbowAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_SHOULDER, POSE_LANDMARKS.LEFT_ELBOW, POSE_LANDMARKS.LEFT_WRIST) })
     } catch (e) {
       console.warn("Could not calculate left elbow angle")
     }
@@ -362,7 +369,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
         getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
       )
-      angles.push({ joint: "right_elbow", angle: rightElbowAngle })
+      angles.push({ joint: "right_elbow", angle: rightElbowAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_SHOULDER, POSE_LANDMARKS.RIGHT_ELBOW, POSE_LANDMARKS.RIGHT_WRIST) })
     } catch (e) {
       console.warn("Could not calculate right elbow angle")
     }
@@ -376,7 +383,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_KNEE),
         getLandmark(POSE_LANDMARKS.LEFT_ANKLE)
       )
-      angles.push({ joint: "left_knee", angle: leftKneeAngle })
+      angles.push({ joint: "left_knee", angle: leftKneeAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_HIP, POSE_LANDMARKS.LEFT_KNEE, POSE_LANDMARKS.LEFT_ANKLE) })
     } catch (e) {
       console.warn("Could not calculate left knee angle")
     }
@@ -390,7 +397,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
         getLandmark(POSE_LANDMARKS.RIGHT_ANKLE)
       )
-      angles.push({ joint: "right_knee", angle: rightKneeAngle })
+      angles.push({ joint: "right_knee", angle: rightKneeAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_HIP, POSE_LANDMARKS.RIGHT_KNEE, POSE_LANDMARKS.RIGHT_ANKLE) })
     } catch (e) {
       console.warn("Could not calculate right knee angle")
     }
@@ -404,7 +411,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_HIP),
         getLandmark(POSE_LANDMARKS.LEFT_KNEE)
       )
-      angles.push({ joint: "left_hip", angle: leftHipAngle })
+      angles.push({ joint: "left_hip", angle: leftHipAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_SHOULDER, POSE_LANDMARKS.LEFT_HIP, POSE_LANDMARKS.LEFT_KNEE) })
     } catch (e) {
       console.warn("Could not calculate left hip angle")
     }
@@ -418,7 +425,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_HIP),
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
       )
-      angles.push({ joint: "right_hip", angle: rightHipAngle })
+      angles.push({ joint: "right_hip", angle: rightHipAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_SHOULDER, POSE_LANDMARKS.RIGHT_HIP, POSE_LANDMARKS.RIGHT_KNEE) })
     } catch (e) {
       console.warn("Could not calculate right hip angle")
     }
@@ -432,7 +439,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
         getLandmark(POSE_LANDMARKS.LEFT_HIP)
       )
-      angles.push({ joint: "left_shoulder", angle: leftShoulderAngle })
+      angles.push({ joint: "left_shoulder", angle: leftShoulderAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_ELBOW, POSE_LANDMARKS.LEFT_SHOULDER, POSE_LANDMARKS.LEFT_HIP) })
     } catch (e) {
       console.warn("Could not calculate left shoulder angle")
     }
@@ -446,7 +453,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
         getLandmark(POSE_LANDMARKS.RIGHT_HIP)
       )
-      angles.push({ joint: "right_shoulder", angle: rightShoulderAngle })
+      angles.push({ joint: "right_shoulder", angle: rightShoulderAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_ELBOW, POSE_LANDMARKS.RIGHT_SHOULDER, POSE_LANDMARKS.RIGHT_HIP) })
     } catch (e) {
       console.warn("Could not calculate right shoulder angle")
     }
@@ -462,7 +469,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_KNEE),
         getLandmark(POSE_LANDMARKS.LEFT_ANKLE)
       )
-      angles.push({ joint: "left_leg_segment", angle: leftLegSegmentAngle })
+      angles.push({ joint: "left_leg_segment", angle: leftLegSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_KNEE, POSE_LANDMARKS.LEFT_ANKLE) })
     } catch (e) {
       console.warn("Could not calculate left leg segment angle")
     }
@@ -475,7 +482,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE),
         getLandmark(POSE_LANDMARKS.RIGHT_ANKLE)
       )
-      angles.push({ joint: "right_leg_segment", angle: rightLegSegmentAngle })
+      angles.push({ joint: "right_leg_segment", angle: rightLegSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_KNEE, POSE_LANDMARKS.RIGHT_ANKLE) })
     } catch (e) {
       console.warn("Could not calculate right leg segment angle")
     }
@@ -488,7 +495,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_HIP),
         getLandmark(POSE_LANDMARKS.LEFT_KNEE)
       )
-      angles.push({ joint: "left_thigh_segment", angle: leftThighSegmentAngle })
+      angles.push({ joint: "left_thigh_segment", angle: leftThighSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_HIP, POSE_LANDMARKS.LEFT_KNEE) })
     } catch (e) {
       console.warn("Could not calculate left thigh segment angle")
     }
@@ -501,7 +508,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_HIP),
         getLandmark(POSE_LANDMARKS.RIGHT_KNEE)
       )
-      angles.push({ joint: "right_thigh_segment", angle: rightThighSegmentAngle })
+      angles.push({ joint: "right_thigh_segment", angle: rightThighSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_HIP, POSE_LANDMARKS.RIGHT_KNEE) })
     } catch (e) {
       console.warn("Could not calculate right thigh segment angle")
     }
@@ -514,7 +521,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_SHOULDER),
         getLandmark(POSE_LANDMARKS.LEFT_ELBOW)
       )
-      angles.push({ joint: "left_arm_segment", angle: leftArmSegmentAngle })
+      angles.push({ joint: "left_arm_segment", angle: leftArmSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_SHOULDER, POSE_LANDMARKS.LEFT_ELBOW) })
     } catch (e) {
       console.warn("Could not calculate left arm segment angle")
     }
@@ -527,7 +534,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_SHOULDER),
         getLandmark(POSE_LANDMARKS.RIGHT_ELBOW)
       )
-      angles.push({ joint: "right_arm_segment", angle: rightArmSegmentAngle })
+      angles.push({ joint: "right_arm_segment", angle: rightArmSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_SHOULDER, POSE_LANDMARKS.RIGHT_ELBOW) })
     } catch (e) {
       console.warn("Could not calculate right arm segment angle")
     }
@@ -540,7 +547,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.LEFT_ELBOW),
         getLandmark(POSE_LANDMARKS.LEFT_WRIST)
       )
-      angles.push({ joint: "left_forearm_segment", angle: leftForearmSegmentAngle })
+      angles.push({ joint: "left_forearm_segment", angle: leftForearmSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.LEFT_ELBOW, POSE_LANDMARKS.LEFT_WRIST) })
     } catch (e) {
       console.warn("Could not calculate left forearm segment angle")
     }
@@ -553,7 +560,7 @@ function calculateJointAngles(
         getLandmark(POSE_LANDMARKS.RIGHT_ELBOW),
         getLandmark(POSE_LANDMARKS.RIGHT_WRIST)
       )
-      angles.push({ joint: "right_forearm_segment", angle: rightForearmSegmentAngle })
+      angles.push({ joint: "right_forearm_segment", angle: rightForearmSegmentAngle, visibility: getVisibility(POSE_LANDMARKS.RIGHT_ELBOW, POSE_LANDMARKS.RIGHT_WRIST) })
     } catch (e) {
       console.warn("Could not calculate right forearm segment angle")
     }

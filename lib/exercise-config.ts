@@ -1,51 +1,53 @@
 /**
- * Exercise configurations with specific angles to track
+ * Joint Group Configuration
+ *
+ * Replaces the old exercise-specific configs with broad joint group definitions.
+ * A doctor selects a joint group (knees, shoulders) rather than a specific exercise.
+ * The template learner discovers the motion pattern from the reference video.
+ *
+ * Old exercise IDs (knee-extension, scap-wall-slides) are kept as aliases so that
+ * existing database rows and URL params continue to work.
  */
 
+export interface ExerciseConfig {
+  id: string
+  name: string
+  description: string
+  anglesOfInterest: string[]
+  // Minimum joint angle movement (degrees) required for a feature to be "active"
+  minAmplitudeDegrees?: number
+}
+
+// AngleConfig kept for components that reference it
 export interface AngleConfig {
   type: "joint" | "segment"
   name: string
   description: string
 }
 
-export interface ExerciseConfig {
-  id: string
-  name: string
-  description: string
-  // Specific angles to track (not just joints)
-  anglesOfInterest: string[]
-  // Human-readable angle descriptions
-  angleConfigs: AngleConfig[]
-}
-
-export const EXERCISE_CONFIGS: ExerciseConfig[] = [
+const JOINT_GROUPS: ExerciseConfig[] = [
   {
-    id: "knee-extension",
-    name: "Knee Extension",
-    description: "Extending the knee from bent to straight position",
+    id: "knees",
+    name: "Knees",
+    description:
+      "Knee-focused exercises: extensions, flexions, squats, lunges, step-ups",
     anglesOfInterest: [
-      // Joint angles (3-point)
-      "left_knee",      // Hip-Knee-Ankle angle
-      "right_knee",     // Hip-Knee-Ankle angle
-      // Segment angles (2-point relative to vertical)
-      "left_leg_segment",    // Knee-Ankle segment
-      "right_leg_segment",   // Knee-Ankle segment
-      "left_thigh_segment",  // Hip-Knee segment
-      "right_thigh_segment", // Hip-Knee segment
+      "left_knee",
+      "right_knee",
+      "left_hip",
+      "right_hip",
+      "left_leg_segment",
+      "right_leg_segment",
+      "left_thigh_segment",
+      "right_thigh_segment",
     ],
-    angleConfigs: [
-      { type: "joint", name: "left_knee", description: "Left knee joint angle (hip-knee-ankle)" },
-      { type: "joint", name: "right_knee", description: "Right knee joint angle (hip-knee-ankle)" },
-      { type: "segment", name: "left_leg_segment", description: "Left lower leg angle from vertical (knee-ankle)" },
-      { type: "segment", name: "right_leg_segment", description: "Right lower leg angle from vertical (knee-ankle)" },
-      { type: "segment", name: "left_thigh_segment", description: "Left thigh angle from vertical (hip-knee)" },
-      { type: "segment", name: "right_thigh_segment", description: "Right thigh angle from vertical (hip-knee)" },
-    ],
+    minAmplitudeDegrees: 15,
   },
   {
-    id: "scap-wall-slides",
-    name: "Scap Wall Slides",
-    description: "Bilateral arm exercise against a wall - slide arms up and down maintaining contact with wall",
+    id: "shoulders",
+    name: "Shoulders",
+    description:
+      "Shoulder-focused exercises: raises, slides, rotations, overhead presses",
     anglesOfInterest: [
       "left_shoulder",
       "right_shoulder",
@@ -56,21 +58,22 @@ export const EXERCISE_CONFIGS: ExerciseConfig[] = [
       "left_forearm_segment",
       "right_forearm_segment",
     ],
-    angleConfigs: [
-      { type: "joint", name: "left_shoulder", description: "Left shoulder joint angle (elbow-shoulder-hip)" },
-      { type: "joint", name: "right_shoulder", description: "Right shoulder joint angle (elbow-shoulder-hip)" },
-      { type: "joint", name: "left_elbow", description: "Left elbow joint angle (shoulder-elbow-wrist)" },
-      { type: "joint", name: "right_elbow", description: "Right elbow joint angle (shoulder-elbow-wrist)" },
-      { type: "segment", name: "left_arm_segment", description: "Left upper arm angle from vertical (shoulder-elbow)" },
-      { type: "segment", name: "right_arm_segment", description: "Right upper arm angle from vertical (shoulder-elbow)" },
-      { type: "segment", name: "left_forearm_segment", description: "Left forearm angle from vertical (elbow-wrist)" },
-      { type: "segment", name: "right_forearm_segment", description: "Right forearm angle from vertical (elbow-wrist)" },
-    ],
+    minAmplitudeDegrees: 18,
   },
 ]
 
+// Old exercise IDs map to joint groups so existing assignments keep working
+const ALIASES: Record<string, string> = {
+  "knee-extension": "knees",
+  "scap-wall-slides": "shoulders",
+}
+
+/** Exposed as EXERCISE_CONFIGS for backward compat with UI dropdowns */
+export const EXERCISE_CONFIGS: ExerciseConfig[] = JOINT_GROUPS
+
 export function getExerciseConfig(exerciseId: string): ExerciseConfig | undefined {
-  return EXERCISE_CONFIGS.find((config) => config.id === exerciseId)
+  const resolved = ALIASES[exerciseId] ?? exerciseId
+  return JOINT_GROUPS.find((g) => g.id === resolved)
 }
 
 export function filterAnglesByExercise(
@@ -79,7 +82,15 @@ export function filterAnglesByExercise(
 ): string[] {
   const config = getExerciseConfig(exerciseId)
   if (!config) return allAngles
-  
-  return allAngles.filter((angle) => config.anglesOfInterest.includes(angle))
+  return allAngles.filter((a) => config.anglesOfInterest.includes(a))
 }
 
+/** Resolve an alias or group ID to the canonical group ID */
+export function resolveJointGroup(groupOrAlias: string): string {
+  return ALIASES[groupOrAlias] ?? groupOrAlias
+}
+
+/** Convenience: get the angles of interest for any group or alias */
+export function getAnglesOfInterest(groupOrAlias: string): string[] {
+  return getExerciseConfig(groupOrAlias)?.anglesOfInterest ?? []
+}
