@@ -28,11 +28,33 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
-    const body = await req.json()
-    const { patient_id, name, exercise_type, video_path, video_url, template, notes, allow_progression } = body
+     const body = await req.json()
+const {
+  patient_id,
+  name,
+  exercise_type,
+  video_path,
+  video_url,
+  template,
+  notes,
+  allow_progression,
 
+  reps,
+  sets,
+  frequency
+} = body
     // Validate required fields
-    if (!patient_id || !name || !exercise_type || !video_path || !video_url || !template) {
+if (
+  !patient_id ||
+  !name ||
+  !exercise_type ||
+  !video_path ||
+  !video_url ||
+  !template ||
+  !reps ||
+  !sets ||
+  !frequency
+) {  
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
@@ -63,16 +85,20 @@ export async function POST(req: Request) {
     const { data: assignment, error: insertErr } = await supabaseAdmin
       .from("exercise_assignments")
       .insert({
-        doctor_id: user.id,
-        patient_id,
-        name,
-        exercise_type,
-        video_path,
-        video_url,
-        template,
-        notes: notes || null,
-        allow_progression: allow_progression ?? true,
-      })
+  doctor_id: user.id,
+  patient_id,
+  name,
+  exercise_type,
+  video_path,
+  video_url,
+  template,
+  notes: notes || null,
+  allow_progression: allow_progression ?? true,
+
+  reps,
+  sets,
+  frequency,
+})
       .select("id")
       .single()
 
